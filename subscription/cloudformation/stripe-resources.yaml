@@ -1,0 +1,273 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Shared Stripe subscription resources
+
+Parameters:
+  AppName:
+    Type: String
+    Description: Application name for resource naming
+
+  Stage:
+    Type: String
+    Description: Deployment stage (dev, prod)
+
+  TemplateBucketName:
+    Type: String
+    Description: S3 bucket containing Lambda code
+
+  DataTableName:
+    Type: String
+    Description: DynamoDB table name
+
+  DataTableArn:
+    Type: String
+    Description: DynamoDB table ARN
+
+  LogRetentionInDays:
+    Type: Number
+    Default: 7
+    Description: CloudWatch log retention in days
+
+  EnableTestMode:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Whether to enable test mode secrets
+
+Conditions:
+  HasTestMode: !Equals [!Ref EnableTestMode, "true"]
+
+Resources:
+  # ============================================
+  # Secrets Manager
+  # ============================================
+
+  StripeSecrets:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${AppName}/stripe-${Stage}"
+      Description: Stripe API credentials
+      SecretString: '{"secretKey":"sk_placeholder","webhookSecret":"whsec_placeholder","publishableKey":"pk_placeholder"}'
+      Tags:
+        - Key: Project
+          Value: !Ref AppName
+        - Key: Stage
+          Value: !Ref Stage
+
+  StripeTestSecrets:
+    Type: AWS::SecretsManager::Secret
+    Condition: HasTestMode
+    Properties:
+      Name: !Sub "${AppName}/stripe-test-${Stage}"
+      Description: Stripe test mode credentials
+      SecretString: '{"secretKey":"sk_test_placeholder","webhookSecret":"whsec_test_placeholder","publishableKey":"pk_test_placeholder"}'
+      Tags:
+        - Key: Project
+          Value: !Ref AppName
+        - Key: Stage
+          Value: !Ref Stage
+
+  # ============================================
+  # IAM Role for Payment Lambdas
+  # ============================================
+
+  PaymentLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AppName}-payment-lambda-role-${Stage}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                Resource:
+                  - !Ref DataTableArn
+                  - !Sub "${DataTableArn}/index/*"
+        - PolicyName: SecretsAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref StripeSecrets
+                  - !If [HasTestMode, !Ref StripeTestSecrets, !Ref "AWS::NoValue"]
+      Tags:
+        - Key: Project
+          Value: !Ref AppName
+
+  # ============================================
+  # Create Checkout Lambda
+  # ============================================
+
+  CreateCheckoutFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${AppName}-create-checkout-${Stage}"
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt PaymentLambdaRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DataTableName
+          STRIPE_SECRETS_ARN: !Ref StripeSecrets
+          STRIPE_TEST_SECRETS_ARN: !If [HasTestMode, !Ref StripeTestSecrets, ""]
+      Code:
+        S3Bucket: !Ref TemplateBucketName
+        S3Key: !Sub "functions/${Stage}/createCheckout.zip"
+      Tags:
+        - Key: Project
+          Value: !Ref AppName
+
+  CreateCheckoutLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AppName}-create-checkout-${Stage}"
+      RetentionInDays: !Ref LogRetentionInDays
+      Tags:
+        - Key: Project
+          Value: !Ref AppName
+
+  # ============================================
+  # Stripe Webhook Lambda
+  # ============================================
+
+  StripeWebhookFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${AppName}-stripe-webhook-${Stage}"
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt PaymentLambdaRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DataTableName
+          STRIPE_SECRETS_ARN: !Ref StripeSecrets
+          STRIPE_TEST_SECRETS_ARN: !If [HasTestMode, !Ref StripeTestSecrets, ""]
+      Code:
+        S3Bucket: !Ref TemplateBucketName
+        S3Key: !Sub "functions/${Stage}/stripeWebhook.zip"
+      Tags:
+        - Key: Project
+          Value: !Ref AppName
+
+  StripeWebhookLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AppName}-stripe-webhook-${Stage}"
+      RetentionInDays: !Ref LogRetentionInDays
+      Tags:
+        - Key: Project
+          Value: !Ref AppName
+
+  # ============================================
+  # API Gateway for Webhooks
+  # ============================================
+
+  WebhookApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub "${AppName}-webhooks-${Stage}"
+      Description: Webhook endpoints for payment providers
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins: ["*"]
+        AllowMethods: [POST, OPTIONS]
+        AllowHeaders: [Content-Type, stripe-signature]
+      Tags:
+        Project: !Ref AppName
+
+  WebhookApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref WebhookApi
+      StageName: !Ref Stage
+      AutoDeploy: true
+      Tags:
+        Project: !Ref AppName
+
+  StripeWebhookRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebhookApi
+      RouteKey: "POST /webhooks/stripe"
+      Target: !Sub "integrations/${StripeWebhookIntegration}"
+
+  StripeWebhookIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebhookApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt StripeWebhookFunction.Arn
+      PayloadFormatVersion: "2.0"
+
+  StripeWebhookPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref StripeWebhookFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebhookApi}/*"
+
+Outputs:
+  StripeSecretsArn:
+    Description: Stripe Secrets ARN
+    Value: !Ref StripeSecrets
+    Export:
+      Name: !Sub "${AppName}-${Stage}-StripeSecretsArn"
+
+  StripeTestSecretsArn:
+    Condition: HasTestMode
+    Description: Stripe Test Secrets ARN
+    Value: !Ref StripeTestSecrets
+    Export:
+      Name: !Sub "${AppName}-${Stage}-StripeTestSecretsArn"
+
+  PaymentLambdaRoleArn:
+    Description: Payment Lambda Role ARN
+    Value: !GetAtt PaymentLambdaRole.Arn
+    Export:
+      Name: !Sub "${AppName}-${Stage}-PaymentLambdaRoleArn"
+
+  StripeWebhookUrl:
+    Description: Stripe Webhook URL (configure in Stripe Dashboard)
+    Value: !Sub "https://${WebhookApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/webhooks/stripe"
+    Export:
+      Name: !Sub "${AppName}-${Stage}-StripeWebhookUrl"
+
+  CreateCheckoutFunctionArn:
+    Description: Create Checkout Function ARN
+    Value: !GetAtt CreateCheckoutFunction.Arn
+    Export:
+      Name: !Sub "${AppName}-${Stage}-CreateCheckoutFunctionArn"
+
+  StripeWebhookFunctionArn:
+    Description: Stripe Webhook Function ARN
+    Value: !GetAtt StripeWebhookFunction.Arn
+    Export:
+      Name: !Sub "${AppName}-${Stage}-StripeWebhookFunctionArn"
+
+  WebhookApiEndpoint:
+    Description: Webhook API endpoint base URL
+    Value: !Sub "https://${WebhookApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
+    Export:
+      Name: !Sub "${AppName}-${Stage}-WebhookApiEndpoint"

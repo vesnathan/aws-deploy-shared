@@ -1,0 +1,32 @@
+{
+  "name": "@aws-deploy-shared/subscription",
+  "version": "1.0.0",
+  "description": "Shared subscription system for AWS projects using Stripe",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./types": "./types/index.ts",
+    "./lambda": "./lambda/index.ts",
+    "./frontend": "./frontend/index.ts",
+    "./config": "./config/index.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.0.0",
+    "@aws-sdk/client-secrets-manager": "^3.0.0",
+    "@aws-sdk/lib-dynamodb": "^3.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  }
+}

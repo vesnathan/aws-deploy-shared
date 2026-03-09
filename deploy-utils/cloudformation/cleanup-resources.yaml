@@ -1,0 +1,149 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  Cleanup Custom Resources for CloudFormation Stack Deletion
+
+  This nested stack provides Lambda functions and Custom Resources that handle
+  cleanup operations during stack deletion that CloudFormation cannot handle natively.
+
+  Solves:
+  - S3 buckets with objects (must be emptied before deletion)
+  - Cognito User Pools with domains (domain must be deleted first)
+
+  Usage:
+  - Include this as a nested stack in your main template
+  - Pass bucket names and user pool IDs as parameters
+  - The cleanup resources will automatically run during stack delete
+
+Parameters:
+  AppName:
+    Type: String
+    Description: Application name for resource naming
+
+  Stage:
+    Type: String
+    Description: Deployment stage (dev, prod)
+
+  S3BucketNames:
+    Type: CommaDelimitedList
+    Description: Comma-separated list of S3 bucket names to clean up
+    Default: ""
+
+  UserPoolId:
+    Type: String
+    Description: Cognito User Pool ID to clean up
+    Default: ""
+
+  CleanupLambdaS3Bucket:
+    Type: String
+    Description: S3 bucket containing the cleanup Lambda code
+
+  CleanupLambdaS3Key:
+    Type: String
+    Description: S3 key for the cleanup Lambda code zip file
+
+Conditions:
+  HasS3Buckets: !Not [!Equals [!Join [",", !Ref S3BucketNames], ""]]
+  HasUserPool: !Not [!Equals [!Ref UserPoolId, ""]]
+
+Resources:
+  # IAM Role for cleanup Lambda functions
+  CleanupLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AppName}-${Stage}-cleanup-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3CleanupPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:ListBucketVersions
+                  - s3:GetBucketVersioning
+                  - s3:DeleteObject
+                  - s3:DeleteObjectVersion
+                Resource: "*"
+        - PolicyName: CognitoCleanupPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cognito-idp:DescribeUserPool
+                  - cognito-idp:DeleteUserPoolDomain
+                  - cognito-idp:ListIdentityProviders
+                  - cognito-idp:DeleteIdentityProvider
+                Resource: "*"
+
+  # S3 Bucket Cleanup Lambda
+  S3CleanupFunction:
+    Type: AWS::Lambda::Function
+    Condition: HasS3Buckets
+    Properties:
+      FunctionName: !Sub "${AppName}-${Stage}-s3-cleanup"
+      Runtime: nodejs20.x
+      Handler: s3-bucket-cleanup.handler
+      Role: !GetAtt CleanupLambdaRole.Arn
+      Timeout: 300
+      MemorySize: 256
+      Code:
+        S3Bucket: !Ref CleanupLambdaS3Bucket
+        S3Key: !Ref CleanupLambdaS3Key
+
+  # Cognito Domain Cleanup Lambda
+  CognitoCleanupFunction:
+    Type: AWS::Lambda::Function
+    Condition: HasUserPool
+    Properties:
+      FunctionName: !Sub "${AppName}-${Stage}-cognito-cleanup"
+      Runtime: nodejs20.x
+      Handler: cognito-domain-cleanup.handler
+      Role: !GetAtt CleanupLambdaRole.Arn
+      Timeout: 60
+      MemorySize: 128
+      Code:
+        S3Bucket: !Ref CleanupLambdaS3Bucket
+        S3Key: !Ref CleanupLambdaS3Key
+
+  # Custom Resource for S3 Cleanup (one per bucket)
+  # NOTE: For multiple buckets, you need to create multiple resources
+  # This is a single-bucket example - see README for multi-bucket pattern
+  S3CleanupResource:
+    Type: Custom::S3BucketCleanup
+    Condition: HasS3Buckets
+    Properties:
+      ServiceToken: !GetAtt S3CleanupFunction.Arn
+      BucketName: !Select [0, !Ref S3BucketNames]
+
+  # Custom Resource for Cognito Cleanup
+  CognitoCleanupResource:
+    Type: Custom::CognitoDomainCleanup
+    Condition: HasUserPool
+    Properties:
+      ServiceToken: !GetAtt CognitoCleanupFunction.Arn
+      UserPoolId: !Ref UserPoolId
+
+Outputs:
+  CleanupLambdaRoleArn:
+    Description: ARN of the cleanup Lambda IAM role
+    Value: !GetAtt CleanupLambdaRole.Arn
+
+  S3CleanupFunctionArn:
+    Condition: HasS3Buckets
+    Description: ARN of the S3 cleanup Lambda function
+    Value: !GetAtt S3CleanupFunction.Arn
+
+  CognitoCleanupFunctionArn:
+    Condition: HasUserPool
+    Description: ARN of the Cognito cleanup Lambda function
+    Value: !GetAtt CognitoCleanupFunction.Arn

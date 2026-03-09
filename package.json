@@ -1,0 +1,50 @@
+{
+  "name": "aws-deploy-shared",
+  "version": "1.0.0",
+  "description": "Shared utilities and types for AWS deployment projects",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./deploy-utils": "./deploy-utils/index.ts",
+    "./deploy-utils/custom-resources": "./deploy-utils/custom-resources/index.ts",
+    "./deploy-utils/custom-resources/s3-bucket-cleanup": "./deploy-utils/custom-resources/s3-bucket-cleanup.ts",
+    "./deploy-utils/custom-resources/cognito-domain-cleanup": "./deploy-utils/custom-resources/cognito-domain-cleanup.ts",
+    "./deploy-utils/custom-resources/route53-record-upsert": "./deploy-utils/custom-resources/route53-record-upsert.ts",
+    "./types": "./src/types/index.ts",
+    "./cognito": "./cognito/index.ts",
+    "./subscription": "./subscription/index.ts",
+    "./subscription/types": "./subscription/types/index.ts",
+    "./subscription/lambda": "./subscription/lambda/index.ts",
+    "./subscription/frontend": "./subscription/frontend/index.ts",
+    "./subscription/config": "./subscription/config/index.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-appsync": "^3.0.0",
+    "@aws-sdk/client-cloudformation": "^3.0.0",
+    "@aws-sdk/client-cloudfront": "^3.0.0",
+    "@aws-sdk/client-cloudwatch-logs": "^3.0.0",
+    "@aws-sdk/client-cognito-identity-provider": "^3.0.0",
+    "@aws-sdk/client-dynamodb": "^3.0.0",
+    "@aws-sdk/client-iam": "^3.0.0",
+    "@aws-sdk/client-lambda": "^3.0.0",
+    "@aws-sdk/client-route-53": "^3.0.0",
+    "@aws-sdk/client-s3": "^3.0.0",
+    "@aws-sdk/client-secrets-manager": "^3.0.0",
+    "@aws-sdk/client-sts": "^3.0.0",
+    "@aws-sdk/lib-dynamodb": "^3.0.0",
+    "archiver": "^7.0.0",
+    "chalk": "^5.3.0",
+    "esbuild": "^0.27.0",
+    "mime-types": "^3.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/archiver": "^7.0.0",
+    "@types/aws-lambda": "^8.10.0",
+    "@types/mime-types": "^3.0.1",
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.0.0",
+    "react": "^18.0.0",
+    "typescript": "^5.0.0"
+  }
+}
