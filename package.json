@@ -4,19 +4,60 @@
   "description": "Shared utilities and types for AWS deployment projects",
   "private": true,
   "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "yarn build"
+  },
   "exports": {
-    "./deploy-utils": "./deploy-utils/index.ts",
-    "./deploy-utils/custom-resources": "./deploy-utils/custom-resources/index.ts",
-    "./deploy-utils/custom-resources/s3-bucket-cleanup": "./deploy-utils/custom-resources/s3-bucket-cleanup.ts",
-    "./deploy-utils/custom-resources/cognito-domain-cleanup": "./deploy-utils/custom-resources/cognito-domain-cleanup.ts",
-    "./deploy-utils/custom-resources/route53-record-upsert": "./deploy-utils/custom-resources/route53-record-upsert.ts",
-    "./types": "./src/types/index.ts",
-    "./cognito": "./cognito/index.ts",
-    "./subscription": "./subscription/index.ts",
-    "./subscription/types": "./subscription/types/index.ts",
-    "./subscription/lambda": "./subscription/lambda/index.ts",
-    "./subscription/frontend": "./subscription/frontend/index.ts",
-    "./subscription/config": "./subscription/config/index.ts"
+    "./deploy-utils": {
+      "types": "./dist/deploy-utils/index.d.ts",
+      "default": "./deploy-utils/index.ts"
+    },
+    "./deploy-utils/custom-resources": {
+      "types": "./dist/deploy-utils/custom-resources/index.d.ts",
+      "default": "./deploy-utils/custom-resources/index.ts"
+    },
+    "./deploy-utils/custom-resources/s3-bucket-cleanup": {
+      "types": "./dist/deploy-utils/custom-resources/s3-bucket-cleanup.d.ts",
+      "default": "./deploy-utils/custom-resources/s3-bucket-cleanup.ts"
+    },
+    "./deploy-utils/custom-resources/cognito-domain-cleanup": {
+      "types": "./dist/deploy-utils/custom-resources/cognito-domain-cleanup.d.ts",
+      "default": "./deploy-utils/custom-resources/cognito-domain-cleanup.ts"
+    },
+    "./deploy-utils/custom-resources/route53-record-upsert": {
+      "types": "./dist/deploy-utils/custom-resources/route53-record-upsert.d.ts",
+      "default": "./deploy-utils/custom-resources/route53-record-upsert.ts"
+    },
+    "./types": {
+      "types": "./dist/src/types/index.d.ts",
+      "default": "./src/types/index.ts"
+    },
+    "./cognito": {
+      "types": "./dist/cognito/index.d.ts",
+      "default": "./cognito/index.ts"
+    },
+    "./subscription": {
+      "types": "./dist/subscription/index.d.ts",
+      "default": "./subscription/index.ts"
+    },
+    "./subscription/types": {
+      "types": "./dist/subscription/types/index.d.ts",
+      "default": "./subscription/types/index.ts"
+    },
+    "./subscription/lambda": {
+      "types": "./dist/subscription/lambda/index.d.ts",
+      "default": "./subscription/lambda/index.ts"
+    },
+    "./subscription/frontend": {
+      "types": "./dist/subscription/frontend/index.d.ts",
+      "default": "./subscription/frontend/index.ts"
+    },
+    "./subscription/config": {
+      "types": "./dist/subscription/config/index.d.ts",
+      "default": "./subscription/config/index.ts"
+    }
   },
   "dependencies": {
     "@aws-sdk/client-appsync": "^3.1004.0",
