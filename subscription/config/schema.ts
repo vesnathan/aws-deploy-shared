@@ -48,13 +48,6 @@ export const DynamoDBConfigSchema = z.object({
   }),
 });
 
-/** Test mode config schema */
-export const TestModeConfigSchema = z.object({
-  pk: z.string().min(1),
-  sk: z.string().min(1),
-  field: z.string().min(1),
-});
-
 /** Full subscription config schema */
 export const SubscriptionConfigSchema = z.object({
   projectId: z.string().min(1, "Project ID is required"),
@@ -64,9 +57,9 @@ export const SubscriptionConfigSchema = z.object({
   tiers: z.array(TierDefinitionSchema).min(1, "At least one tier is required"),
   products: z.array(ProductDefinitionSchema).optional(),
   dynamodb: DynamoDBConfigSchema,
-  stripeSecretsEnvVar: z.string().min(1, "Stripe secrets env var is required"),
-  stripeTestSecretsEnvVar: z.string().optional(),
-  testModeConfigKey: TestModeConfigSchema.optional(),
+  stripeAccountKeysEnvVar: z.string().min(1, "Stripe account keys env var is required"),
+  stripeAppSecretsEnvVar: z.string().min(1, "Stripe app secrets env var is required"),
+  stageEnvVar: z.string().min(1, "Stage env var is required"),
   webhookLogTtlDays: z.number().int().positive().optional(),
   hooks: z.object({
     onSubscriptionCreated: z.function().optional(),

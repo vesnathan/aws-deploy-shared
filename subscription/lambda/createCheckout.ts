@@ -22,11 +22,6 @@ export function createCheckoutHandler<
     .toUpperCase()
     .slice(0, 22);
 
-  // Cache for test mode (with TTL)
-  let cachedTestMode: boolean | null = null;
-  let testModeCacheTime = 0;
-  const CACHE_TTL_MS = 60000; // 1 minute
-
   function getTier(tierId: string): TierDefinition<TBenefits> | undefined {
     return config.tiers.find((t) => t.id === tierId);
   }
@@ -35,19 +30,12 @@ export function createCheckoutHandler<
     return config.products?.find((p) => p.id === productId);
   }
 
-  async function isTestMode(): Promise<boolean> {
-    if (!config.testModeConfigKey) {
+  function isTestMode(): boolean {
+    if (!config.stageEnvVar) {
       return false;
     }
-
-    const now = Date.now();
-    if (cachedTestMode !== null && now - testModeCacheTime < CACHE_TTL_MS) {
-      return cachedTestMode;
-    }
-
-    cachedTestMode = await dynamoHelper.checkTestMode(config.testModeConfigKey);
-    testModeCacheTime = now;
-    return cachedTestMode;
+    const stage = process.env[config.stageEnvVar];
+    return stage !== "prod";
   }
 
   /**
@@ -76,8 +64,8 @@ export function createCheckoutHandler<
         "subscription_data[metadata][userId]": request.userId,
         "subscription_data[metadata][tierId]": request.itemId,
         "subscription_data[description]": config.projectName,
-        // Statement descriptor shown on bank statements (e.g., "APP BUILDER STUDI* QUIZ NIGHT LIVE")
-        "payment_intent_data[statement_descriptor_suffix]": statementDescriptor,
+        // For subscriptions, use on_behalf_of or set at account/product level for statement descriptor
+        // The account's default statement descriptor will be used
         allow_promotion_codes: "true",
       }),
     });
@@ -163,13 +151,13 @@ export function createCheckoutHandler<
       itemId: request.itemId,
     });
 
-    // Check test mode
-    const testMode = await isTestMode();
+    // Check test mode (based on stage)
+    const testMode = isTestMode();
 
     // Get secrets
     const secrets = await secretsManager.getStripeSecrets(
-      config.stripeSecretsEnvVar,
-      config.stripeTestSecretsEnvVar,
+      config.stripeAccountKeysEnvVar,
+      config.stripeAppSecretsEnvVar,
       testMode,
     );
 
@@ -183,11 +171,18 @@ export function createCheckoutHandler<
         throw new Error("Cannot checkout free tier");
       }
 
+      console.log(`[createCheckout] Subscription checkout for tier: ${tier.id}`);
+      console.log(`[createCheckout] stripePriceIdKey: ${tier.stripePriceIdKey}`);
+
       const priceId = secrets[tier.stripePriceIdKey];
+      console.log(`[createCheckout] Resolved priceId: ${priceId}`);
+
       if (!priceId) {
+        console.error(`[createCheckout] Available secret keys:`, Object.keys(secrets).filter(k => k.includes("PRICE")));
         throw new Error(`Price ID not configured for tier: ${request.itemId}`);
       }
 
+      console.log(`[createCheckout] Creating Stripe session with priceId=${priceId}, tierId=${tier.id}`);
       return createSubscriptionCheckout(request, secrets.secretKey, priceId);
     }
 

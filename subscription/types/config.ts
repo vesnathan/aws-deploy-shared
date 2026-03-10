@@ -167,18 +167,24 @@ export interface SubscriptionConfig<
   /** DynamoDB configuration */
   dynamodb: DynamoDBConfig;
 
-  /** Secrets Manager ARN environment variable key */
-  stripeSecretsEnvVar: string;
+  /**
+   * Env var for Stripe account-level keys ARN (shared across all apps).
+   * Contains: STRIPE_LIVE_SECRET_KEY, STRIPE_TEST_SECRET_KEY, etc.
+   */
+  stripeAccountKeysEnvVar: string;
 
-  /** Optional: Test mode secrets ARN env var */
-  stripeTestSecretsEnvVar?: string;
+  /**
+   * Env var for app-specific Stripe secrets ARN.
+   * Contains: STRIPE_LIVE_WEBHOOK_SECRET, STRIPE_LIVE_*_PRICE_ID, etc.
+   */
+  stripeAppSecretsEnvVar: string;
 
-  /** Optional: Test mode config key in DynamoDB */
-  testModeConfigKey?: {
-    pk: string;
-    sk: string;
-    field: string;
-  };
+  /**
+   * Stage environment variable name for determining live/test mode.
+   * When stage !== 'prod', test mode is enabled (uses STRIPE_TEST_* keys).
+   * Example: 'STAGE' - will check process.env.STAGE
+   */
+  stageEnvVar: string;
 
   /** Optional: Webhook logging TTL in days (default: 30) */
   webhookLogTtlDays?: number;

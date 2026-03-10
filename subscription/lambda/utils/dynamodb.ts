@@ -92,6 +92,24 @@ export function createDynamoDBHelper(region: string, config: DynamoDBConfig) {
 
     const fieldPath = config.subscriptionFieldPath;
 
+    // Build the subscription object to set atomically
+    // This avoids issues with nested path updates when parent doesn't exist
+    const subscriptionData = {
+      tier: tierId,
+      status: status,
+      provider: "stripe",
+      subscriptionId: subscriptionId,
+      customerId: customerId,
+      startedAt: now, // Will be overwritten below if exists
+      expiresAt: expiresAt,
+    };
+
+    // First, get existing subscription to preserve startedAt if it exists
+    const existing = await getUserSubscription(userId);
+    if (existing?.startedAt) {
+      subscriptionData.startedAt = existing.startedAt;
+    }
+
     await docClient.send(
       new UpdateCommand({
         TableName: getTableName(),
@@ -100,28 +118,14 @@ export function createDynamoDBHelper(region: string, config: DynamoDBConfig) {
           SK: formatUserSk(userId),
         },
         UpdateExpression: `
-          SET ${fieldPath}.tier = :tier,
-              ${fieldPath}.#st = :status,
-              ${fieldPath}.provider = :provider,
-              ${fieldPath}.subscriptionId = :subId,
-              ${fieldPath}.customerId = :custId,
-              ${fieldPath}.startedAt = if_not_exists(${fieldPath}.startedAt, :now),
-              ${fieldPath}.expiresAt = :expiresAt,
+          SET ${fieldPath} = :subData,
               ${config.stripeGsiName}PK = :gsiPk,
               ${config.stripeGsiName}SK = :gsiSk,
               updatedAt = :now
         `,
-        ExpressionAttributeNames: {
-          "#st": "status",
-        },
         ExpressionAttributeValues: {
-          ":tier": tierId,
-          ":status": status,
-          ":provider": "stripe",
-          ":subId": subscriptionId,
-          ":custId": customerId,
+          ":subData": subscriptionData,
           ":now": now,
-          ":expiresAt": expiresAt,
           ":gsiPk": formatStripeGsiPk(customerId),
           ":gsiSk": `SUB#${subscriptionId}`,
         },
@@ -251,11 +255,11 @@ export function createDynamoDBHelper(region: string, config: DynamoDBConfig) {
   }
 
   /**
-   * Get user's subscription info (for portal session creation)
+   * Get user's subscription info (for portal session creation and updates)
    */
   async function getUserSubscription(
     userId: string,
-  ): Promise<{ stripeCustomerId: string; stripeSubscriptionId: string } | null> {
+  ): Promise<{ stripeCustomerId: string; stripeSubscriptionId: string; startedAt?: string } | null> {
     try {
       const result = await docClient.send(
         new GetCommand({
@@ -283,6 +287,7 @@ export function createDynamoDBHelper(region: string, config: DynamoDBConfig) {
 
       const customerId = current.customerId as string | undefined;
       const subscriptionId = current.subscriptionId as string | undefined;
+      const startedAt = current.startedAt as string | undefined;
 
       if (!customerId) {
         return null;
@@ -291,35 +296,11 @@ export function createDynamoDBHelper(region: string, config: DynamoDBConfig) {
       return {
         stripeCustomerId: customerId,
         stripeSubscriptionId: subscriptionId || "",
+        startedAt,
       };
     } catch (error) {
       console.error("Error getting user subscription:", error);
       return null;
-    }
-  }
-
-  /**
-   * Check test mode setting from DynamoDB
-   */
-  async function checkTestMode(
-    testModeConfig?: { pk: string; sk: string; field: string },
-  ): Promise<boolean> {
-    if (!testModeConfig) {
-      return false;
-    }
-
-    try {
-      const result = await docClient.send(
-        new GetCommand({
-          TableName: getTableName(),
-          Key: { PK: testModeConfig.pk, SK: testModeConfig.sk },
-        }),
-      );
-
-      return result.Item?.[testModeConfig.field] ?? false;
-    } catch (error) {
-      console.error("Failed to read test mode config, defaulting to production:", error);
-      return false;
     }
   }
 
@@ -335,7 +316,6 @@ export function createDynamoDBHelper(region: string, config: DynamoDBConfig) {
     cancelUserSubscription,
     markSubscriptionPastDue,
     logWebhookEvent,
-    checkTestMode,
   };
 }
 

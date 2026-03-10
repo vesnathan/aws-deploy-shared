@@ -548,6 +548,69 @@ export class ResolverCompiler {
       );
     }
 
+    // Handle constants imports (e.g., from shared/src/constants/tasks.ts)
+    const constantsImportRegex =
+      /import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+(['"])[^'"]*constants\/(\w+)[^'"]*\2;?\s*\n?/g;
+    let constantsMatch;
+    const constantsImports: { items: Set<string>; file: string }[] = [];
+
+    while ((constantsMatch = constantsImportRegex.exec(codeToCompile)) !== null) {
+      const importedItems = constantsMatch[1]
+        .split(",")
+        .map((item: string) => item.trim());
+      const items = new Set<string>();
+      importedItems.forEach((item: string) => {
+        const cleanItem = item
+          .replace(/^type\s+/, "")
+          .split(/\s+as\s+/)[0]
+          .trim();
+        if (cleanItem) items.add(cleanItem);
+      });
+      if (items.size > 0) {
+        constantsImports.push({ items, file: constantsMatch[3] });
+      }
+    }
+
+    if (constantsImports.length > 0) {
+      for (const constImport of constantsImports) {
+        const constantsSourcePath = path.join(
+          this.projectRoot,
+          "shared",
+          "src",
+          "constants",
+          `${constImport.file}.ts`
+        );
+
+        if (fsNode.existsSync(constantsSourcePath)) {
+          let constantsContent = await fsPromises.readFile(
+            constantsSourcePath,
+            "utf-8"
+          );
+
+          // Remove imports from the constants file (they reference gqlTypes which will be inlined separately)
+          constantsContent = constantsContent.replace(
+            /^import\s+.*from\s+['"].*['"];?\s*$/gm,
+            ""
+          );
+
+          // Remove exports, we're inlining
+          constantsContent = constantsContent.replace(/^export\s+/gm, "");
+
+          const inlinedConstants = `// Inlined constants from ${constImport.file}.ts\n${constantsContent.trim()}\n`;
+
+          // Replace the first import of this file with the inlined content
+          const specificImportRegex = new RegExp(
+            `import\\s+(?:type\\s+)?\\{[^}]*\\}\\s+from\\s+(['"])[^'"]*constants\\/${constImport.file}[^'"]*\\1;?\\s*\\n?`
+          );
+          codeToCompile = codeToCompile.replace(specificImportRegex, inlinedConstants);
+        }
+      }
+
+      // Remove any remaining constants imports that weren't found
+      constantsImportRegex.lastIndex = 0;
+      codeToCompile = codeToCompile.replace(constantsImportRegex, "");
+    }
+
     // Handle @appname/shared/src/schemas imports (WithTypename helper and *Return types)
     const schemasImportRegex =
       /import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+(['"])[^'"]*schemas[^'"]*\2;?\s*\n?/g;

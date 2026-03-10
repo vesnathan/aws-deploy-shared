@@ -60,10 +60,18 @@ export interface StripeSubscription {
   customer: string;
   status: string;
   current_period_end?: number;
+  /** Subscription schedule ID (present if changes are scheduled for future) */
+  schedule?: string | null;
+  /** Subscription metadata */
+  metadata?: Record<string, string>;
   items?: {
     data?: Array<{
       price?: {
         id: string;
+        /** Amount in cents */
+        unit_amount?: number;
+        /** Product ID */
+        product?: string;
       };
     }>;
   };

@@ -45,24 +45,12 @@ export function createPortalSessionHandler<
   const secretsManager = createSecretsManager(config.region);
   const dynamoHelper = createDynamoDBHelper(config.region, config.dynamodb);
 
-  // Cache for test mode (with TTL)
-  let cachedTestMode: boolean | null = null;
-  let testModeCacheTime = 0;
-  const CACHE_TTL_MS = 60000; // 1 minute
-
-  async function isTestMode(): Promise<boolean> {
-    if (!config.testModeConfigKey) {
+  function isTestMode(): boolean {
+    if (!config.stageEnvVar) {
       return false;
     }
-
-    const now = Date.now();
-    if (cachedTestMode !== null && now - testModeCacheTime < CACHE_TTL_MS) {
-      return cachedTestMode;
-    }
-
-    cachedTestMode = await dynamoHelper.checkTestMode(config.testModeConfigKey);
-    testModeCacheTime = now;
-    return cachedTestMode;
+    const stage = process.env[config.stageEnvVar];
+    return stage !== "prod";
   }
 
   /**
@@ -82,13 +70,13 @@ export function createPortalSessionHandler<
 
     console.log(`Creating portal session for user ${userId}`);
 
-    // Check test mode
-    const testMode = await isTestMode();
+    // Check test mode (based on stage)
+    const testMode = isTestMode();
 
     // Get Stripe secrets
     const secrets = await secretsManager.getStripeSecrets(
-      config.stripeSecretsEnvVar,
-      config.stripeTestSecretsEnvVar,
+      config.stripeAccountKeysEnvVar,
+      config.stripeAppSecretsEnvVar,
       testMode,
     );
 

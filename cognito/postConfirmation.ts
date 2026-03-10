@@ -141,13 +141,9 @@ function createWelcomeSubscription(
  * Create onboarding state object
  */
 function createOnboardingState(
-  authMethods: PostConfirmationConfig["authMethods"],
+  _authMethods: PostConfirmationConfig["authMethods"],
   isOAuthUser: boolean
 ) {
-  // Determine if onboarding is needed based on auth method
-  const supportsNative = authMethods?.native ?? true;
-  const supportsOAuth = authMethods?.oauth ?? true;
-
   return {
     onboardingComplete: false,
     onboardingStep: null as string | null,

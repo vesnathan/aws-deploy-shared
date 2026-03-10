@@ -42,35 +42,36 @@ export function createStripeWebhookHandler<
   const secretsManager = createSecretsManager(config.region);
   const dynamoHelper = createDynamoDBHelper(config.region, config.dynamodb);
 
-  // Cache for test mode (with TTL)
-  let cachedTestMode: boolean | null = null;
-  let testModeCacheTime = 0;
-  const CACHE_TTL_MS = 60000; // 1 minute
-
   const webhookLogTtlDays = config.webhookLogTtlDays ?? 30;
 
-  async function isTestMode(): Promise<boolean> {
-    if (!config.testModeConfigKey) {
+  function isTestMode(): boolean {
+    if (!config.stageEnvVar) {
       return false;
     }
-
-    const now = Date.now();
-    if (cachedTestMode !== null && now - testModeCacheTime < CACHE_TTL_MS) {
-      return cachedTestMode;
-    }
-
-    cachedTestMode = await dynamoHelper.checkTestMode(config.testModeConfigKey);
-    testModeCacheTime = now;
-    return cachedTestMode;
+    const stage = process.env[config.stageEnvVar];
+    return stage !== "prod";
   }
 
   /**
    * Get tier from Stripe price ID
    */
   function getTierFromPriceId(priceId: string, secrets: Record<string, string | undefined>): string {
+    // Log price ID mapping attempt
+    console.log(`[getTierFromPriceId] Looking up priceId: ${priceId}`);
+
+    // Log available price ID mappings from secrets
+    const priceIdMappings: Record<string, string> = {};
+    for (const tier of config.tiers) {
+      if (tier.stripePriceIdKey) {
+        priceIdMappings[tier.id] = `${tier.stripePriceIdKey} = ${secrets[tier.stripePriceIdKey] || "NOT_SET"}`;
+      }
+    }
+    console.log(`[getTierFromPriceId] Available mappings:`, JSON.stringify(priceIdMappings));
+
     // Check all tiers to find matching price ID
     for (const tier of config.tiers) {
       if (tier.stripePriceIdKey && secrets[tier.stripePriceIdKey] === priceId) {
+        console.log(`[getTierFromPriceId] MATCH: ${priceId} -> ${tier.id} (via ${tier.stripePriceIdKey})`);
         return tier.id;
       }
     }
@@ -78,11 +79,12 @@ export function createStripeWebhookHandler<
     // Fallback: check price ID naming convention
     for (const tier of config.tiers) {
       if (priceId.toLowerCase().includes(tier.id.toLowerCase())) {
+        console.log(`[getTierFromPriceId] FALLBACK MATCH: ${priceId} contains "${tier.id}" -> ${tier.id}`);
         return tier.id;
       }
     }
 
-    console.warn(`Unknown price ID: ${priceId}, defaulting to first paid tier`);
+    console.warn(`[getTierFromPriceId] NO MATCH for priceId: ${priceId}, defaulting to first paid tier`);
     const firstPaidTier = config.tiers.find((t) => t.priceInCents > 0);
     return firstPaidTier?.id ?? config.freeTierId;
   }
@@ -94,9 +96,16 @@ export function createStripeWebhookHandler<
     session: StripeCheckoutSession,
     secrets: Record<string, string | undefined>,
   ): Promise<void> {
+    console.log(`[handleCheckoutCompleted] ====== START ======`);
+    console.log(`[handleCheckoutCompleted] Session ID: ${session.id}`);
+    console.log(`[handleCheckoutCompleted] Mode: ${session.mode}`);
+    console.log(`[handleCheckoutCompleted] Customer: ${session.customer}`);
+    console.log(`[handleCheckoutCompleted] Subscription: ${session.subscription}`);
+    console.log(`[handleCheckoutCompleted] Metadata:`, JSON.stringify(session.metadata));
+
     const userId = session.metadata?.userId;
     if (!userId) {
-      console.error("No userId in checkout session metadata");
+      console.error("[handleCheckoutCompleted] No userId in checkout session metadata");
       return;
     }
 
@@ -106,7 +115,7 @@ export function createStripeWebhookHandler<
       if (productId && config.hooks?.onProductPurchased) {
         await config.hooks.onProductPurchased(userId, productId, session.metadata);
       }
-      console.log(`Product purchase completed for user ${userId}, product ${productId}`);
+      console.log(`[handleCheckoutCompleted] Product purchase completed for user ${userId}, product ${productId}`);
       return;
     }
 
@@ -115,15 +124,17 @@ export function createStripeWebhookHandler<
     const subscriptionId = session.subscription;
 
     if (!subscriptionId) {
-      console.error("No subscription ID in checkout session");
+      console.error("[handleCheckoutCompleted] No subscription ID in checkout session");
       return;
     }
 
     const tierId = session.metadata?.tierId ?? config.tiers.find((t) => t.level === 1)?.id;
     if (!tierId) {
-      console.error("Could not determine tier for subscription");
+      console.error("[handleCheckoutCompleted] Could not determine tier for subscription");
       return;
     }
+
+    console.log(`[handleCheckoutCompleted] Creating subscription: userId=${userId}, tierId=${tierId}, customerId=${customerId}`);
 
     await dynamoHelper.updateUserSubscription(
       userId,
@@ -138,7 +149,8 @@ export function createStripeWebhookHandler<
       await config.hooks.onSubscriptionCreated(userId, tierId, customerId, subscriptionId);
     }
 
-    console.log(`Checkout completed for user ${userId}, tier ${tierId}`);
+    console.log(`[handleCheckoutCompleted] Checkout completed for user ${userId}, tier ${tierId}`);
+    console.log(`[handleCheckoutCompleted] ====== END ======`);
   }
 
   /**
@@ -181,18 +193,46 @@ export function createStripeWebhookHandler<
     subscription: StripeSubscription,
     secrets: Record<string, string | undefined>,
   ): Promise<void> {
+    console.log(`[handleSubscriptionUpdated] ====== START ======`);
+    console.log(`[handleSubscriptionUpdated] Subscription ID: ${subscription.id}`);
+    console.log(`[handleSubscriptionUpdated] Customer ID: ${subscription.customer}`);
+    console.log(`[handleSubscriptionUpdated] Status: ${subscription.status}`);
+    console.log(`[handleSubscriptionUpdated] Items count: ${subscription.items?.data?.length ?? 0}`);
+
+    // Log all items with their price IDs
+    if (subscription.items?.data) {
+      subscription.items.data.forEach((item, idx) => {
+        console.log(`[handleSubscriptionUpdated] Item[${idx}]: priceId=${item.price?.id}, amount=${item.price?.unit_amount}, product=${item.price?.product}`);
+      });
+    }
+
+    // Log schedule info if present
+    if (subscription.schedule) {
+      console.log(`[handleSubscriptionUpdated] HAS SCHEDULE: ${subscription.schedule} (changes may be pending)`);
+    }
+
+    // Log metadata
+    if (subscription.metadata) {
+      console.log(`[handleSubscriptionUpdated] Metadata:`, JSON.stringify(subscription.metadata));
+    }
+
     const customerId = subscription.customer;
     const subscriptionId = subscription.id;
     const status = STRIPE_STATUS_MAP[subscription.status] ?? null;
+    console.log(`[handleSubscriptionUpdated] Mapped status: ${subscription.status} -> ${status}`);
 
     const priceId = subscription.items?.data?.[0]?.price?.id;
+    console.log(`[handleSubscriptionUpdated] Using priceId: ${priceId}`);
+
     const tierId = priceId ? getTierFromPriceId(priceId, secrets) : config.freeTierId;
+    console.log(`[handleSubscriptionUpdated] Resolved tierId: ${tierId}`);
 
     const userId = await dynamoHelper.findUserByStripeCustomerId(customerId);
     if (!userId) {
-      console.error(`No user found for Stripe customer ${customerId}`);
+      console.error(`[handleSubscriptionUpdated] No user found for Stripe customer ${customerId}`);
       return;
     }
+    console.log(`[handleSubscriptionUpdated] Found userId: ${userId}`);
 
     await dynamoHelper.updateUserSubscription(
       userId,
@@ -203,7 +243,8 @@ export function createStripeWebhookHandler<
       subscription.current_period_end,
     );
 
-    console.log(`Subscription updated for user ${userId}: tier=${tierId}, status=${status}`);
+    console.log(`[handleSubscriptionUpdated] Updated subscription for user ${userId}: tier=${tierId}, status=${status}`);
+    console.log(`[handleSubscriptionUpdated] ====== END ======`);
   }
 
   /**
@@ -278,15 +319,22 @@ export function createStripeWebhookHandler<
         };
       }
 
-      // Check test mode
-      const testMode = await isTestMode();
+      // Check test mode (based on stage)
+      const testMode = isTestMode();
 
       // Get secrets
       const secrets = await secretsManager.getStripeSecrets(
-        config.stripeSecretsEnvVar,
-        config.stripeTestSecretsEnvVar,
+        config.stripeAccountKeysEnvVar,
+        config.stripeAppSecretsEnvVar,
         testMode,
       );
+
+      // Log loaded secrets (only price ID keys, not sensitive values)
+      const priceIdKeys = Object.keys(secrets).filter(k => k.includes("PRICE_ID"));
+      console.log(`[webhook] Loaded secrets with price ID keys: ${priceIdKeys.join(", ")}`);
+      priceIdKeys.forEach(key => {
+        console.log(`[webhook] ${key} = ${secrets[key]}`);
+      });
 
       // Get raw body
       const rawBody = event.isBase64Encoded
