@@ -26,14 +26,18 @@
  *
  * ## Required IAM Permissions
  *
- * The orphan checker needs broader permissions than the deploy user.
- * Create a dedicated IAM user with:
+ * The orphan checker uses the shared deploy user credentials.
+ * The deploy user must have:
  * - logs:DescribeLogGroups, logs:DeleteLogGroup
+ * - lambda:ListFunctions, lambda:DeleteFunction
  * - s3:ListAllMyBuckets
+ * - dynamodb:ListTables
+ * - appsync:ListGraphqlApis
  * - cognito-idp:ListUserPools
+ * - iam:ListRoles
  * - cloudformation:ListStacks, cloudformation:DescribeStackResources
  *
- * Set credentials in .env as ORPHAN_CHECKER_KEY and ORPHAN_CHECKER_SECRET.
+ * Set credentials in .env as DEPLOY_USER_KEY and DEPLOY_USER_SECRET.
  *
  * ## Usage
  *
@@ -60,6 +64,23 @@ import {
   ListUserPoolsCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
 import { S3Client, ListBucketsCommand } from "@aws-sdk/client-s3";
+import {
+  LambdaClient,
+  ListFunctionsCommand,
+  DeleteFunctionCommand,
+} from "@aws-sdk/client-lambda";
+import {
+  DynamoDBClient,
+  ListTablesCommand,
+} from "@aws-sdk/client-dynamodb";
+import {
+  AppSyncClient,
+  ListGraphqlApisCommand,
+} from "@aws-sdk/client-appsync";
+import {
+  IAMClient,
+  ListRolesCommand,
+} from "@aws-sdk/client-iam";
 
 interface OrphanCheckerConfig {
   appName: string;
@@ -74,11 +95,11 @@ interface OrphanCheckerConfig {
 }
 
 /**
- * Get AWS client config with orphan-checker credentials if available
+ * Get AWS client config with deploy user credentials if available
  */
 function getClientConfig(region: string) {
-  const accessKeyId = process.env.ORPHAN_CHECKER_KEY;
-  const secretAccessKey = process.env.ORPHAN_CHECKER_SECRET;
+  const accessKeyId = process.env.DEPLOY_USER_KEY;
+  const secretAccessKey = process.env.DEPLOY_USER_SECRET;
 
   if (accessKeyId && secretAccessKey) {
     return {
@@ -95,7 +116,7 @@ function getClientConfig(region: string) {
 }
 
 export interface OrphanedResource {
-  type: "log-group" | "s3-bucket" | "cognito-pool";
+  type: "log-group" | "s3-bucket" | "cognito-pool" | "lambda" | "dynamodb-table" | "appsync-api" | "iam-role";
   name: string;
   reason: string;
 }
@@ -106,6 +127,10 @@ export class OrphanChecker {
   private cfnClient: CloudFormationClient;
   private cognitoClient: CognitoIdentityProviderClient;
   private s3Client: S3Client;
+  private lambdaClient: LambdaClient;
+  private dynamoClient: DynamoDBClient;
+  private appsyncClient: AppSyncClient;
+  private iamClient: IAMClient;
 
   constructor(config: OrphanCheckerConfig) {
     this.config = config;
@@ -114,6 +139,10 @@ export class OrphanChecker {
     this.cfnClient = new CloudFormationClient(clientConfig);
     this.cognitoClient = new CognitoIdentityProviderClient(clientConfig);
     this.s3Client = new S3Client(clientConfig);
+    this.lambdaClient = new LambdaClient(clientConfig);
+    this.dynamoClient = new DynamoDBClient(clientConfig);
+    this.appsyncClient = new AppSyncClient(clientConfig);
+    this.iamClient = new IAMClient(clientConfig);
   }
 
   /**
@@ -440,6 +469,282 @@ export class OrphanChecker {
   }
 
   /**
+   * Check for orphaned Lambda functions
+   */
+  async checkLambdaFunctions(): Promise<OrphanedResource[]> {
+    const orphans: OrphanedResource[] = [];
+    const { appName, stage } = this.config;
+    const prefix = `${appName}-${stage}`;
+
+    this.config.logger.info(`Checking for orphaned Lambda functions (prefix: ${prefix})...`);
+
+    try {
+      // Get all Lambda functions matching the prefix
+      const functionsResponse = await this.lambdaClient.send(
+        new ListFunctionsCommand({})
+      );
+
+      const functions = (functionsResponse.Functions || []).filter(
+        (f) => f.FunctionName?.startsWith(prefix)
+      );
+
+      if (functions.length === 0) {
+        this.config.logger.success("No Lambda functions found with matching prefix");
+        return orphans;
+      }
+
+      // Get managed Lambda functions from CloudFormation
+      const managedFunctions = await this.getManagedResources(
+        `${appName}-${stage}`,
+        "AWS::Lambda::Function"
+      );
+
+      for (const func of functions) {
+        if (func.FunctionName && !managedFunctions.has(func.FunctionName)) {
+          orphans.push({
+            type: "lambda",
+            name: func.FunctionName,
+            reason: "Not managed by CloudFormation (possibly from failed deployment)",
+          });
+        }
+      }
+
+      if (orphans.length > 0) {
+        this.config.logger.warning(`Found ${orphans.length} orphaned Lambda function(s)`);
+      } else {
+        this.config.logger.success("No orphaned Lambda functions found");
+      }
+    } catch (error) {
+      this.config.logger.error(
+        `Error checking Lambda functions: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+
+    return orphans;
+  }
+
+  /**
+   * Check for orphaned DynamoDB tables
+   */
+  async checkDynamoDBTables(): Promise<OrphanedResource[]> {
+    const orphans: OrphanedResource[] = [];
+    const { appName, stage } = this.config;
+
+    this.config.logger.info("Checking for orphaned DynamoDB tables...");
+
+    try {
+      const tablesResponse = await this.dynamoClient.send(
+        new ListTablesCommand({})
+      );
+
+      const tables = (tablesResponse.TableNames || []).filter(
+        (name) => name.includes(appName) && name.includes(stage)
+      );
+
+      if (tables.length === 0) {
+        this.config.logger.success("No DynamoDB tables found with matching pattern");
+        return orphans;
+      }
+
+      // Get managed tables from CloudFormation
+      const managedTables = await this.getManagedResources(
+        `${appName}-${stage}`,
+        "AWS::DynamoDB::Table"
+      );
+
+      for (const tableName of tables) {
+        if (!managedTables.has(tableName)) {
+          orphans.push({
+            type: "dynamodb-table",
+            name: tableName,
+            reason: "Not managed by CloudFormation",
+          });
+        }
+      }
+
+      if (orphans.length > 0) {
+        this.config.logger.warning(`Found ${orphans.length} orphaned DynamoDB table(s)`);
+      } else {
+        this.config.logger.success("No orphaned DynamoDB tables found");
+      }
+    } catch (error) {
+      this.config.logger.error(
+        `Error checking DynamoDB tables: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+
+    return orphans;
+  }
+
+  /**
+   * Check for orphaned AppSync APIs
+   */
+  async checkAppSyncAPIs(): Promise<OrphanedResource[]> {
+    const orphans: OrphanedResource[] = [];
+    const { appName, stage } = this.config;
+
+    this.config.logger.info("Checking for orphaned AppSync APIs...");
+
+    try {
+      const apisResponse = await this.appsyncClient.send(
+        new ListGraphqlApisCommand({})
+      );
+
+      const apis = (apisResponse.graphqlApis || []).filter(
+        (api) => api.name?.includes(appName) && api.name?.includes(stage)
+      );
+
+      if (apis.length === 0) {
+        this.config.logger.success("No AppSync APIs found with matching pattern");
+        return orphans;
+      }
+
+      // Get managed APIs from CloudFormation
+      const managedAPIs = await this.getManagedResources(
+        `${appName}-${stage}`,
+        "AWS::AppSync::GraphQLApi"
+      );
+
+      for (const api of apis) {
+        if (api.apiId && !managedAPIs.has(api.apiId)) {
+          orphans.push({
+            type: "appsync-api",
+            name: `${api.name} (${api.apiId})`,
+            reason: "Not managed by CloudFormation",
+          });
+        }
+      }
+
+      if (orphans.length > 0) {
+        this.config.logger.warning(`Found ${orphans.length} orphaned AppSync API(s)`);
+      } else {
+        this.config.logger.success("No orphaned AppSync APIs found");
+      }
+    } catch (error) {
+      this.config.logger.error(
+        `Error checking AppSync APIs: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+
+    return orphans;
+  }
+
+  /**
+   * Check for orphaned IAM roles
+   */
+  async checkIAMRoles(): Promise<OrphanedResource[]> {
+    const orphans: OrphanedResource[] = [];
+    const { appName, stage } = this.config;
+
+    this.config.logger.info("Checking for orphaned IAM roles...");
+
+    try {
+      const rolesResponse = await this.iamClient.send(
+        new ListRolesCommand({})
+      );
+
+      const roles = (rolesResponse.Roles || []).filter(
+        (role) => role.RoleName?.includes(appName) && role.RoleName?.includes(stage)
+      );
+
+      if (roles.length === 0) {
+        this.config.logger.success("No IAM roles found with matching pattern");
+        return orphans;
+      }
+
+      // Get managed roles from CloudFormation
+      const managedRoles = await this.getManagedResources(
+        `${appName}-${stage}`,
+        "AWS::IAM::Role"
+      );
+
+      for (const role of roles) {
+        if (role.RoleName && !managedRoles.has(role.RoleName)) {
+          orphans.push({
+            type: "iam-role",
+            name: role.RoleName,
+            reason: "Not managed by CloudFormation",
+          });
+        }
+      }
+
+      if (orphans.length > 0) {
+        this.config.logger.warning(`Found ${orphans.length} orphaned IAM role(s)`);
+      } else {
+        this.config.logger.success("No orphaned IAM roles found");
+      }
+    } catch (error) {
+      this.config.logger.error(
+        `Error checking IAM roles: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+
+    return orphans;
+  }
+
+  /**
+   * Generic helper to get managed resources of a given type from CloudFormation
+   */
+  private async getManagedResources(
+    stackName: string,
+    resourceType: string
+  ): Promise<Set<string>> {
+    const managedResources = new Set<string>();
+
+    try {
+      // Check main stack
+      const resourcesResponse = await this.cfnClient.send(
+        new DescribeStackResourcesCommand({ StackName: stackName })
+      );
+
+      for (const resource of resourcesResponse.StackResources || []) {
+        if (resource.ResourceType === resourceType && resource.PhysicalResourceId) {
+          managedResources.add(resource.PhysicalResourceId);
+        }
+      }
+
+      // Check nested stacks
+      const stacksResponse = await this.cfnClient.send(
+        new ListStacksCommand({
+          StackStatusFilter: [
+            "CREATE_COMPLETE",
+            "UPDATE_COMPLETE",
+            "UPDATE_ROLLBACK_COMPLETE",
+            "CREATE_IN_PROGRESS",
+            "UPDATE_IN_PROGRESS",
+          ],
+        })
+      );
+
+      const nestedStacks =
+        stacksResponse.StackSummaries?.filter((s) =>
+          s.StackName?.startsWith(`${stackName}-`)
+        ) || [];
+
+      for (const nested of nestedStacks) {
+        if (nested.StackName) {
+          try {
+            const nestedResources = await this.cfnClient.send(
+              new DescribeStackResourcesCommand({ StackName: nested.StackName })
+            );
+            for (const resource of nestedResources.StackResources || []) {
+              if (resource.ResourceType === resourceType && resource.PhysicalResourceId) {
+                managedResources.add(resource.PhysicalResourceId);
+              }
+            }
+          } catch {
+            // Ignore nested stack errors
+          }
+        }
+      }
+    } catch {
+      // Stack doesn't exist or access denied
+    }
+
+    return managedResources;
+  }
+
+  /**
    * Check all resource types for orphans
    */
   async checkAll(): Promise<OrphanedResource[]> {
@@ -452,11 +757,23 @@ export class OrphanChecker {
     const logGroupOrphans = await this.checkLogGroups();
     allOrphans.push(...logGroupOrphans);
 
+    const lambdaOrphans = await this.checkLambdaFunctions();
+    allOrphans.push(...lambdaOrphans);
+
     const s3Orphans = await this.checkS3Buckets();
     allOrphans.push(...s3Orphans);
 
+    const dynamoOrphans = await this.checkDynamoDBTables();
+    allOrphans.push(...dynamoOrphans);
+
+    const appsyncOrphans = await this.checkAppSyncAPIs();
+    allOrphans.push(...appsyncOrphans);
+
     const cognitoOrphans = await this.checkCognitoPools();
     allOrphans.push(...cognitoOrphans);
+
+    const iamOrphans = await this.checkIAMRoles();
+    allOrphans.push(...iamOrphans);
 
     return allOrphans;
   }
@@ -480,6 +797,24 @@ export class OrphanChecker {
   }
 
   /**
+   * Delete orphaned Lambda functions
+   */
+  async deleteLambdaFunctions(functionNames: string[]): Promise<void> {
+    for (const name of functionNames) {
+      try {
+        await this.lambdaClient.send(
+          new DeleteFunctionCommand({ FunctionName: name })
+        );
+        this.config.logger.success(`Deleted Lambda function: ${name}`);
+      } catch (error) {
+        this.config.logger.error(
+          `Failed to delete Lambda function ${name}: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+  }
+
+  /**
    * Interactive orphan cleanup
    */
   async interactiveCleanup(orphans: OrphanedResource[]): Promise<void> {
@@ -492,13 +827,18 @@ export class OrphanChecker {
     console.log("Found Orphaned Resources:");
     console.log("=".repeat(60));
 
+    const typeLabels: Record<OrphanedResource["type"], string> = {
+      "log-group": "Log Group",
+      "s3-bucket": "S3 Bucket",
+      "cognito-pool": "Cognito Pool",
+      "lambda": "Lambda Function",
+      "dynamodb-table": "DynamoDB Table",
+      "appsync-api": "AppSync API",
+      "iam-role": "IAM Role",
+    };
+
     for (const orphan of orphans) {
-      const typeLabel =
-        orphan.type === "log-group"
-          ? "Log Group"
-          : orphan.type === "s3-bucket"
-            ? "S3 Bucket"
-            : "Cognito Pool";
+      const typeLabel = typeLabels[orphan.type] || orphan.type;
       console.log(`\n  [${typeLabel}] ${orphan.name}`);
       console.log(`    Reason: ${orphan.reason}`);
     }
@@ -514,19 +854,30 @@ export class OrphanChecker {
       await this.deleteLogGroups(logGroupOrphans.map((o) => o.name));
     }
 
+    // Auto-delete Lambda functions (safe - they can be recreated)
+    const lambdaOrphans = orphans.filter((o) => o.type === "lambda");
+    if (lambdaOrphans.length > 0) {
+      console.log(
+        `\nDeleting ${lambdaOrphans.length} orphaned Lambda function(s)...`
+      );
+      await this.deleteLambdaFunctions(lambdaOrphans.map((o) => o.name));
+    }
+
     // Warn about other resources (need manual intervention)
-    const otherOrphans = orphans.filter((o) => o.type !== "log-group");
+    const autoDeleteTypes = ["log-group", "lambda"];
+    const otherOrphans = orphans.filter((o) => !autoDeleteTypes.includes(o.type));
     if (otherOrphans.length > 0) {
       console.log("\n⚠️  The following resources require manual cleanup:");
       for (const orphan of otherOrphans) {
-        console.log(`    - ${orphan.type}: ${orphan.name}`);
+        const typeLabel = typeLabels[orphan.type] || orphan.type;
+        console.log(`    - [${typeLabel}] ${orphan.name}`);
       }
-      console.log(
-        "\nS3 buckets must be emptied before deletion."
-      );
-      console.log(
-        "Cognito pools may have users that need to be migrated."
-      );
+      console.log("\nManual cleanup notes:");
+      console.log("  • S3 buckets must be emptied before deletion");
+      console.log("  • DynamoDB tables may contain data that needs backup");
+      console.log("  • Cognito pools may have users that need migration");
+      console.log("  • IAM roles may be used by other resources");
+      console.log("  • AppSync APIs may have connected clients");
     }
 
     console.log("");
