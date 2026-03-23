@@ -39,6 +39,27 @@ export { MenuSystem } from "./menu-system";
 export { DeploymentOrchestrator } from "./deployment-orchestrator";
 export { removeStack } from "./removal-orchestrator";
 
+// Optional modules for common patterns
+export {
+  deployCertificateStack,
+  deploySesEmailStack,
+  createCognitoAdminUser,
+  seedDatabase,
+} from "./modules";
+export type {
+  CertificateStackConfig,
+  CertificateStackParams,
+  CertificateStackOutputs,
+  SesEmailStackConfig,
+  SesEmailStackParams,
+  CognitoAdminUserConfig,
+  CognitoAdminUserParams,
+  CognitoAdminUserResult,
+  SeedDatabaseConfig,
+  SeedDatabaseParams,
+  SeedItem,
+} from "./modules";
+
 // Removal utilities (for advanced use cases)
 export { checkCognitoUsers } from "./user-safety";
 export {

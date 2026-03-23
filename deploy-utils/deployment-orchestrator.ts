@@ -26,6 +26,23 @@ import { MenuSystem, type DeployOption, type StageOption } from "./menu-system";
 import { removeStack } from "./removal-orchestrator";
 import { OrphanChecker } from "./orphan-checker";
 import { OutputsManager, type StackOutput } from "./outputs-manager";
+import {
+  deployCertificateStack,
+  type CertificateStackConfig,
+  type CertificateStackOutputs,
+} from "./modules/certificate-stack";
+import {
+  deploySesEmailStack,
+  type SesEmailStackConfig,
+} from "./modules/ses-email-stack";
+import {
+  createCognitoAdminUser,
+  type CognitoAdminUserConfig,
+} from "./modules/cognito-admin-user";
+import {
+  seedDatabase as seedDatabaseModule,
+  type SeedDatabaseConfig,
+} from "./modules/seed-database";
 
 export interface StackOutputs {
   CloudFrontDistributionId?: string;
@@ -72,8 +89,51 @@ export interface DeploymentOrchestratorConfig<TStage extends string = string> {
   // Project-specific frontend URL override (for prod custom domains)
   getFrontendUrl?: (stage: TStage, outputs: StackOutputs) => string;
 
-  // Project-specific seed function (optional)
+  /**
+   * Project-specific seed function (optional)
+   * WARNING: Only runs on dev by default. Set seedDevOnly: false to allow prod.
+   */
   seedDatabase?: (outputs: StackOutputs, stage: TStage) => Promise<void>;
+
+  /** Block seeding on prod (default: true). Set to false to allow prod seeding. */
+  seedDevOnly?: boolean;
+
+  // Pre-deployment hook (e.g., for certificate stacks)
+  preDeploy?: (stage: TStage) => Promise<void>;
+
+  // Post-deployment hook (e.g., for logging, cleanup)
+  postDeploy?: (stage: TStage, outputs: StackOutputs) => Promise<void>;
+
+  // ============================================
+  // OPTIONAL MODULES (auto-called when enabled)
+  // ============================================
+
+  /**
+   * Certificate stack deployment (us-east-1 for CloudFront)
+   * Automatically deployed before main stack when enabled
+   */
+  certificateStack?: CertificateStackConfig & {
+    /** Use certificate ARN in stack parameters (parameter name) */
+    parameterName?: string;
+  };
+
+  /**
+   * SES email receiving stack (us-east-1)
+   * Automatically deployed before main stack when enabled
+   */
+  sesEmailStack?: SesEmailStackConfig;
+
+  /**
+   * Cognito admin user creation
+   * Automatically created after main stack when enabled
+   */
+  cognitoAdminUser?: CognitoAdminUserConfig;
+
+  /**
+   * Database seeding from file or function
+   * Alternative to providing a custom seedDatabase callback
+   */
+  seedDatabaseConfig?: SeedDatabaseConfig;
 }
 
 /**
@@ -127,6 +187,7 @@ export class DeploymentOrchestrator<TStage extends string = string> {
   private projectRoot: string;
   private region: string;
   private bootstrapChecker: BootstrapChecker;
+  private certificateOutputs: CertificateStackOutputs = {};
 
   constructor(config: DeploymentOrchestratorConfig<TStage>) {
     this.config = config;
@@ -140,6 +201,118 @@ export class DeploymentOrchestrator<TStage extends string = string> {
       projectRoot: this.projectRoot,
       region: this.region,
     });
+  }
+
+  /**
+   * Run pre-deploy modules (certificate stack, SES stack)
+   */
+  private async runPreDeployModules(stage: TStage): Promise<void> {
+    const bootstrapConfig = this.bootstrapChecker.getBootstrapConfig();
+    const deployDir = path.join(this.projectRoot, "deploy");
+
+    // Deploy certificate stack if enabled
+    if (this.config.certificateStack?.enabled) {
+      this.certificateOutputs = await deployCertificateStack(
+        {
+          appName: this.appName,
+          stage,
+          mainRegion: this.region,
+          templateBucketName: bootstrapConfig.templateBucketName,
+          cfnRoleArn: bootstrapConfig.cfnRoleArn,
+          deployDir,
+          logger,
+        },
+        this.config.certificateStack
+      );
+    }
+
+    // Deploy SES email stack if enabled
+    if (this.config.sesEmailStack?.enabled) {
+      await deploySesEmailStack(
+        {
+          appName: this.appName,
+          stage,
+          mainRegion: this.region,
+          templateBucketName: bootstrapConfig.templateBucketName,
+          cfnRoleArn: bootstrapConfig.cfnRoleArn,
+          deployDir,
+          projectRoot: this.projectRoot,
+          logger,
+        },
+        this.config.sesEmailStack
+      );
+    }
+
+    // Run custom preDeploy hook if provided
+    if (this.config.preDeploy) {
+      logger.info("Running custom pre-deploy hook...");
+      await this.config.preDeploy(stage);
+    }
+  }
+
+  /**
+   * Run post-deploy modules (admin user creation, database seeding)
+   */
+  private async runPostDeployModules(
+    stage: TStage,
+    outputs: StackOutputs
+  ): Promise<void> {
+    // Create admin user if enabled
+    if (this.config.cognitoAdminUser?.enabled && outputs.UserPoolId) {
+      await createCognitoAdminUser(
+        {
+          userPoolId: outputs.UserPoolId,
+          region: this.region,
+          logger,
+        },
+        this.config.cognitoAdminUser
+      );
+    }
+
+    // Seed database if module config provided (alternative to callback)
+    if (this.config.seedDatabaseConfig?.enabled && outputs.DataTableName) {
+      await seedDatabaseModule(
+        {
+          appName: this.appName,
+          stage,
+          region: this.region,
+          tableName: outputs.DataTableName,
+          seedRoleArn: outputs.SeedRoleArn,
+          projectRoot: this.projectRoot,
+          logger,
+        },
+        this.config.seedDatabaseConfig
+      );
+    }
+
+    // Run custom postDeploy hook if provided
+    if (this.config.postDeploy) {
+      logger.info("Running custom post-deploy hook...");
+      await this.config.postDeploy(stage, outputs);
+    }
+  }
+
+  /**
+   * Inject certificate ARN into stack parameters if configured
+   */
+  private injectCertificateParam(
+    parameters: Array<{ ParameterKey: string; ParameterValue: string }>
+  ): Array<{ ParameterKey: string; ParameterValue: string }> {
+    const paramName = this.config.certificateStack?.parameterName;
+    const certArn = this.certificateOutputs.MainCertificateArn;
+
+    if (paramName && certArn) {
+      // Check if parameter already exists
+      const existing = parameters.find((p) => p.ParameterKey === paramName);
+      if (existing) {
+        existing.ParameterValue = certArn;
+      } else {
+        parameters.push({ ParameterKey: paramName, ParameterValue: certArn });
+      }
+      logger.info(`  Injected ${paramName}: ${certArn.substring(0, 50)}...`);
+    }
+
+    return parameters;
   }
 
   /**
@@ -343,16 +516,22 @@ export class DeploymentOrchestrator<TStage extends string = string> {
         break;
 
       case "stack": {
+        // Run pre-deploy modules (certificate, SES, custom hook)
+        await this.runPreDeployModules(stage);
+
         schemaBuildHash = await schemaManager.mergeAndUploadSchema();
         templateBuildHash = await templateUploader.uploadTemplates();
         resolversBuildHash = await resolverCompiler.compileAndUploadResolvers();
         const lambdaFunctions = await lambdaCompiler.compileAndUploadLambdas();
 
-        const stackParameters = this.config.getStackParameters(stage, {
+        let stackParameters = this.config.getStackParameters(stage, {
           resolvers: resolversBuildHash,
           schema: schemaBuildHash,
           templates: templateBuildHash,
         });
+
+        // Inject certificate ARN if configured
+        stackParameters = this.injectCertificateParam(stackParameters);
 
         const stackManager = new StackManager({
           logger,
@@ -384,12 +563,22 @@ export class DeploymentOrchestrator<TStage extends string = string> {
           seedRoleArn: outputs.SeedRoleArn,
         });
         await lambdaUpdater.updateLambdaCode(lambdaFunctions);
+
+        // Run post-deploy modules (admin user, custom hook)
+        await this.runPostDeployModules(stage, outputs);
         break;
       }
 
       case "seed": {
         if (!this.config.seedDatabase) {
           logger.warning("No seed function configured for this project");
+          break;
+        }
+
+        // Block prod seeding by default
+        const seedDevOnly = this.config.seedDevOnly !== false;
+        if (seedDevOnly && stage === "prod") {
+          logger.warning("Skipping database seeding on prod (seedDevOnly: true)");
           break;
         }
 
@@ -429,16 +618,22 @@ export class DeploymentOrchestrator<TStage extends string = string> {
       }
 
       case "full": {
+        // Run pre-deploy modules (certificate, SES, custom hook)
+        await this.runPreDeployModules(stage);
+
         schemaBuildHash = await schemaManager.mergeAndUploadSchema();
         templateBuildHash = await templateUploader.uploadTemplates();
         const lambdaFunctions = await lambdaCompiler.compileAndUploadLambdas();
         resolversBuildHash = await resolverCompiler.compileAndUploadResolvers();
 
-        const stackParameters = this.config.getStackParameters(stage, {
+        let stackParameters = this.config.getStackParameters(stage, {
           resolvers: resolversBuildHash,
           schema: schemaBuildHash,
           templates: templateBuildHash,
         });
+
+        // Inject certificate ARN if configured
+        stackParameters = this.injectCertificateParam(stackParameters);
 
         const stackManager = new StackManager({
           logger,
@@ -495,6 +690,20 @@ export class DeploymentOrchestrator<TStage extends string = string> {
 
         await frontendDeployment.buildFrontend();
         await frontendDeployment.deployFrontend();
+
+        // Seed database if configured (dev only by default)
+        if (this.config.seedDatabase) {
+          const seedDevOnly = this.config.seedDevOnly !== false;
+          if (seedDevOnly && stage === "prod") {
+            logger.info("Skipping database seeding on prod");
+          } else {
+            logger.info("Running database seed...");
+            await this.config.seedDatabase(outputs, stage);
+          }
+        }
+
+        // Run post-deploy modules (admin user, custom hook)
+        await this.runPostDeployModules(stage, outputs);
         break;
       }
 
