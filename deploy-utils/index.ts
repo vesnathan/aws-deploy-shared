@@ -15,6 +15,15 @@ export {
   getLogFilePath,
 } from "./logger";
 
+// AWS Credentials
+export {
+  getAwsCredentials,
+  validateAwsCredentials,
+  configureAwsCredentials,
+  getAwsAccountId,
+} from "./aws-credentials";
+export type { AwsCredentialsConfig } from "./aws-credentials";
+
 // Deployment utilities
 export { ResolverCompiler } from "./resolver-compiler";
 export { LambdaCompiler } from "./lambda-compiler";
