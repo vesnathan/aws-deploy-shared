@@ -35,6 +35,17 @@ export interface StageOption<T extends string> {
   stage: T;
 }
 
+/**
+ * Generic selection item for pre-menus (app selection, category selection, etc.)
+ */
+export interface SelectionItem<T extends string = string> {
+  key: string;
+  label: string;
+  description?: string;
+  value: T;
+  isSeparator?: boolean;
+}
+
 const DEFAULT_MENU_OPTIONS: MenuOption[] = [
   {
     key: "1",
@@ -203,6 +214,120 @@ export class MenuSystem {
   }
 
   private isFirstRender: boolean = true;
+
+  /**
+   * Show a generic selection menu (for app selection, category selection, etc.)
+   * Use this as a "pre-menu" before stage/action selection
+   *
+   * @param title - Menu title (e.g., "Select App")
+   * @param items - Selection items
+   * @returns Selected value, or null if cancelled (when allowCancel is true)
+   */
+  public async showSelection<T extends string>(
+    title: string,
+    items: SelectionItem<T>[],
+    options?: { allowCancel?: boolean; cancelLabel?: string }
+  ): Promise<T | null> {
+    const allowCancel = options?.allowCancel ?? true;
+    const cancelLabel = options?.cancelLabel ?? "Cancel";
+
+    // Filter out separators for selection logic
+    const selectableItems = items.filter((item) => !item.isSeparator);
+    let selectedIndex = 0;
+    let isFirstRender = true;
+
+    const renderMenu = (selectedIdx: number): void => {
+      if (!isFirstRender) {
+        const lines = items.length + (allowCancel ? 4 : 3);
+        process.stdout.write(`\x1b[${lines}A`);
+        process.stdout.write("\x1b[J");
+      }
+      isFirstRender = false;
+
+      console.log("=".repeat(60));
+      console.log(
+        `  ${title} - Use \x1b[1m↑↓\x1b[0m to select, \x1b[1mEnter\x1b[0m to confirm`
+      );
+      console.log("=".repeat(60));
+
+      let selectableIdx = 0;
+      for (const item of items) {
+        if (item.isSeparator) {
+          console.log(`  \x1b[90m── ${item.label} ──\x1b[0m`);
+        } else {
+          const isSelected = selectableIdx === selectedIdx;
+          const prefix = isSelected ? "\x1b[36m❯\x1b[0m" : " ";
+          const highlight = isSelected ? "\x1b[1m\x1b[36m" : "\x1b[90m";
+          const reset = "\x1b[0m";
+          const desc = item.description ? ` - ${item.description}` : "";
+          console.log(`  ${prefix} ${highlight}${item.label}${reset}${desc}`);
+          selectableIdx++;
+        }
+      }
+
+      if (allowCancel) {
+        console.log(`  \x1b[90m  (q) ${cancelLabel}\x1b[0m`);
+      }
+    };
+
+    renderMenu(selectedIndex);
+
+    return new Promise((resolve) => {
+      if (process.stdin.isTTY) {
+        process.stdin.setRawMode(true);
+      }
+      process.stdin.resume();
+      process.stdin.setEncoding("utf8");
+
+      const handleKeypress = (key: string): void => {
+        if (key === "\u001b[A" || key === "k") {
+          selectedIndex =
+            (selectedIndex - 1 + selectableItems.length) % selectableItems.length;
+          renderMenu(selectedIndex);
+        } else if (key === "\u001b[B" || key === "j") {
+          selectedIndex = (selectedIndex + 1) % selectableItems.length;
+          renderMenu(selectedIndex);
+        } else if (key === "\r" || key === "\n" || key === " ") {
+          cleanup();
+          console.log("");
+          resolve(selectableItems[selectedIndex].value);
+        } else if (key === "\u0003") {
+          // Ctrl+C - exit
+          cleanup();
+          console.log("\nDeployment cancelled.");
+          process.exit(0);
+        } else if (key === "q" || key === "\u001b") {
+          // q or Escape - cancel/go back
+          if (allowCancel) {
+            cleanup();
+            console.log("");
+            resolve(null);
+          }
+        } else if (key >= "0" && key <= "9") {
+          const idx = selectableItems.findIndex((o) => o.key === key);
+          if (idx !== -1) {
+            selectedIndex = idx;
+            renderMenu(selectedIndex);
+            setTimeout(() => {
+              cleanup();
+              console.log("");
+              resolve(selectableItems[selectedIndex].value);
+            }, 150);
+          }
+        }
+      };
+
+      const cleanup = (): void => {
+        process.stdin.removeListener("data", handleKeypress);
+        if (process.stdin.isTTY) {
+          process.stdin.setRawMode(false);
+        }
+        process.stdin.pause();
+      };
+
+      process.stdin.on("data", handleKeypress);
+    });
+  }
 
   /**
    * Render menu at current cursor position

@@ -84,5 +84,15 @@ export type { FrontendDeploymentConfig } from "./frontend-deployment";
 export type { StackManagerConfig } from "./stack-manager";
 export type { S3UtilsConfig } from "./s3-utils";
 export type { TemplateUploaderConfig } from "./template-uploader";
-export type { DeployOption, MenuOption } from "./menu-system";
+export type { DeployOption, MenuOption, SelectionItem, StageOption } from "./menu-system";
+
+// CLI Arguments (for non-interactive / CI usage)
+export {
+  createBaseCommand,
+  parseBaseOptions,
+  DEFAULT_STAGES,
+  isCI,
+  validateNonInteractiveOptions,
+} from "./cli-args";
+export type { DeployAction, BaseDeployOptions, DefaultStage } from "./cli-args";
 export type { DeploymentOrchestratorConfig, StackOutputs, CLIArgs } from "./deployment-orchestrator";
