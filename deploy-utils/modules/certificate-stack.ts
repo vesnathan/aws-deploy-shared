@@ -94,29 +94,41 @@ async function findExistingCertificates(
         certDomain === `*.${domainName}` ||
         certDomain === `www.${domainName}`
       ) {
-        // Get certificate details to check SANs
-        const describeResponse = await acmClient.send(
-          new DescribeCertificateCommand({ CertificateArn: certArn })
-        );
+        // Get certificate details to check SANs and verify it exists
+        try {
+          const describeResponse = await acmClient.send(
+            new DescribeCertificateCommand({ CertificateArn: certArn })
+          );
 
-        const sans = describeResponse.Certificate?.SubjectAlternativeNames || [];
-        const hasWildcard = sans.includes(`*.${domainName}`);
-        const hasWww = sans.includes(`www.${domainName}`);
-        const hasApex = sans.includes(domainName);
+          const sans = describeResponse.Certificate?.SubjectAlternativeNames || [];
+          const hasWildcard = sans.includes(`*.${domainName}`);
+          const hasWww = sans.includes(`www.${domainName}`);
+          const hasApex = sans.includes(domainName);
 
-        // Check if cert covers what we need (apex + www, or wildcard)
-        if ((hasApex && hasWww) || hasWildcard) {
-          result.mainCertArn = certArn;
-          logger.info(`    Found main certificate: ${certDomain}`);
-          logger.info(`      ARN: ${certArn.substring(0, 60)}...`);
+          // Check if cert covers what we need (apex + www, or wildcard)
+          if ((hasApex && hasWww) || hasWildcard) {
+            result.mainCertArn = certArn;
+            logger.info(`    Found main certificate: ${certDomain}`);
+            logger.info(`      ARN: ${certArn.substring(0, 60)}...`);
+          }
+        } catch {
+          logger.warning(`    Main certificate ${certArn.substring(0, 50)}... no longer exists, skipping`);
         }
       }
 
       // Check for auth certificate (auth.domain.com)
       if (certDomain === `auth.${domainName}`) {
-        result.authCertArn = certArn;
-        logger.info(`    Found auth certificate: ${certDomain}`);
-        logger.info(`      ARN: ${certArn.substring(0, 60)}...`);
+        // Verify certificate actually exists and is valid
+        try {
+          await acmClient.send(
+            new DescribeCertificateCommand({ CertificateArn: certArn })
+          );
+          result.authCertArn = certArn;
+          logger.info(`    Found auth certificate: ${certDomain}`);
+          logger.info(`      ARN: ${certArn.substring(0, 60)}...`);
+        } catch {
+          logger.warning(`    Auth certificate ${certArn.substring(0, 50)}... no longer exists, skipping`);
+        }
       }
     }
 
