@@ -70,7 +70,8 @@ export class TemplateUploader {
 
     this.logger.debug(`Template hash: ${templateBuildHash}`);
 
-    // Upload nested templates to versioned paths
+    // Upload nested templates to versioned paths (resources/${hash}/Dir/file.yaml)
+    // This ensures CloudFormation detects template changes
     for (const { dir, file, content } of templateFiles) {
       const key = `resources/${templateBuildHash}/${dir}/${file}`;
       await this.s3Client.send(

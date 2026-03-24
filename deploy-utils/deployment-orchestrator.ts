@@ -63,6 +63,7 @@ export interface DeploymentOrchestratorConfig<TStage extends string = string> {
   appName: string; // e.g., "helpstay"
   projectRoot: string; // Path to project root
   region?: string; // Default: ap-southeast-2
+  deployUserName?: string; // Default: `${appName}-deploy`, use "deploy" for shared user
 
   // Stage options (e.g., [{stage: "dev", ...}, {stage: "prod", ...}])
   stages: StageOption<TStage>[];
@@ -113,8 +114,10 @@ export interface DeploymentOrchestratorConfig<TStage extends string = string> {
    * Automatically deployed before main stack when enabled
    */
   certificateStack?: CertificateStackConfig & {
-    /** Use certificate ARN in stack parameters (parameter name) */
+    /** Use main certificate ARN in stack parameters (parameter name) */
     parameterName?: string;
+    /** Use auth certificate ARN in stack parameters (parameter name) */
+    authParameterName?: string;
   };
 
   /**
@@ -200,6 +203,7 @@ export class DeploymentOrchestrator<TStage extends string = string> {
       appName: this.appName,
       projectRoot: this.projectRoot,
       region: this.region,
+      deployUserName: config.deployUserName,
     });
   }
 
@@ -293,23 +297,37 @@ export class DeploymentOrchestrator<TStage extends string = string> {
   }
 
   /**
-   * Inject certificate ARN into stack parameters if configured
+   * Inject certificate ARNs into stack parameters if configured
    */
   private injectCertificateParam(
     parameters: Array<{ ParameterKey: string; ParameterValue: string }>
   ): Array<{ ParameterKey: string; ParameterValue: string }> {
-    const paramName = this.config.certificateStack?.parameterName;
-    const certArn = this.certificateOutputs.MainCertificateArn;
+    // Inject main certificate ARN
+    const mainParamName = this.config.certificateStack?.parameterName;
+    const mainCertArn = this.certificateOutputs.MainCertificateArn;
 
-    if (paramName && certArn) {
-      // Check if parameter already exists
-      const existing = parameters.find((p) => p.ParameterKey === paramName);
+    if (mainParamName && mainCertArn) {
+      const existing = parameters.find((p) => p.ParameterKey === mainParamName);
       if (existing) {
-        existing.ParameterValue = certArn;
+        existing.ParameterValue = mainCertArn;
       } else {
-        parameters.push({ ParameterKey: paramName, ParameterValue: certArn });
+        parameters.push({ ParameterKey: mainParamName, ParameterValue: mainCertArn });
       }
-      logger.info(`  Injected ${paramName}: ${certArn.substring(0, 50)}...`);
+      logger.info(`  Injected ${mainParamName}: ${mainCertArn.substring(0, 50)}...`);
+    }
+
+    // Inject auth certificate ARN
+    const authParamName = this.config.certificateStack?.authParameterName;
+    const authCertArn = this.certificateOutputs.AuthCertificateArn;
+
+    if (authParamName && authCertArn) {
+      const existing = parameters.find((p) => p.ParameterKey === authParamName);
+      if (existing) {
+        existing.ParameterValue = authCertArn;
+      } else {
+        parameters.push({ ParameterKey: authParamName, ParameterValue: authCertArn });
+      }
+      logger.info(`  Injected ${authParamName}: ${authCertArn.substring(0, 50)}...`);
     }
 
     return parameters;
