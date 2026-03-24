@@ -107,6 +107,7 @@ export interface BootstrapCheckerConfig {
   cfnRoleName?: string; // Default: `${appName}-cfn-role`
   deployUserName?: string; // Default: `${appName}-deploy`
   region?: string; // Default: ap-southeast-2
+  skipUserCheck?: boolean; // Skip IAM user check (for shared users without iam:GetUser)
 }
 
 /**
@@ -121,6 +122,7 @@ export class BootstrapChecker {
   private cfnRoleName: string;
   private deployUserName: string;
   private region: string;
+  private skipUserCheck: boolean;
 
   constructor(config: BootstrapCheckerConfig) {
     this.appName = config.appName;
@@ -131,6 +133,7 @@ export class BootstrapChecker {
     this.deployUserName =
       config.deployUserName || `${config.appName}-deploy`;
     this.region = config.region || MAIN_REGION;
+    this.skipUserCheck = config.skipUserCheck || false;
   }
 
   /**
