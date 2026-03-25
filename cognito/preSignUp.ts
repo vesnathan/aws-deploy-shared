@@ -57,7 +57,7 @@ function isFederatedUser(username: string): boolean {
  *
  * @example
  * // In your Lambda file:
- * import { createPreSignUpHandler } from "aws-deploy-shared/cognito";
+ * import { createPreSignUpHandler } from "@vesnathan/aws-deploy-shared/cognito";
  *
  * export const handler = createPreSignUpHandler({
  *   oauthProviders: ["Google"],
