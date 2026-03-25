@@ -1,8 +1,14 @@
 {
-  "name": "aws-deploy-shared",
+  "name": "@vesnathan/aws-deploy-shared",
   "version": "1.0.0",
   "description": "Shared utilities and types for AWS deployment projects",
-  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vesnathan/shared.git"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "type": "module",
   "scripts": {
     "build": "tsc",
