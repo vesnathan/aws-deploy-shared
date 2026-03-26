@@ -48,6 +48,11 @@ import {
   GetDistributionConfigCommand,
   UpdateDistributionCommand,
 } from "@aws-sdk/client-cloudfront";
+import {
+  CloudWatchLogsClient,
+  DescribeLogGroupsCommand,
+  DeleteLogGroupCommand,
+} from "@aws-sdk/client-cloudwatch-logs";
 import type { OrphanCleanupOptions, Logger } from "./types";
 
 interface ErrorWithMessage {
@@ -62,6 +67,7 @@ export class OrphanCleanup {
   private cognitoClient: CognitoIdentityProviderClient;
   private s3Client: S3Client;
   private cloudFrontClient: CloudFrontClient;
+  private logsClient: CloudWatchLogsClient;
   private options: OrphanCleanupOptions;
   private logger: Logger;
   private failedCleanups: Array<{ resource: string; error: string }> = [];
@@ -78,6 +84,7 @@ export class OrphanCleanup {
     });
     this.s3Client = new S3Client({ region: options.region });
     this.cloudFrontClient = new CloudFrontClient({ region: options.region });
+    this.logsClient = new CloudWatchLogsClient({ region: options.region });
   }
 
   /**
@@ -484,6 +491,63 @@ export class OrphanCleanup {
   }
 
   /**
+   * Clean up orphaned CloudWatch Log Groups
+   */
+  async cleanupOrphanedLogGroups(): Promise<void> {
+    this.logger.info("Checking for orphaned CloudWatch Log Groups...");
+    try {
+      // Log groups for Lambda functions follow the pattern /aws/lambda/{function-name}
+      const prefix = `/aws/lambda/${this.options.appName}-`;
+      let nextToken: string | undefined;
+
+      do {
+        const response = await this.logsClient.send(
+          new DescribeLogGroupsCommand({
+            logGroupNamePrefix: prefix,
+            nextToken,
+          })
+        );
+
+        for (const logGroup of response.logGroups || []) {
+          if (!logGroup.logGroupName) continue;
+
+          // Check if it matches our app-stage pattern
+          if (!this.matchesPattern(logGroup.logGroupName)) {
+            continue;
+          }
+
+          this.logger.warning(`Found orphaned Log Group: ${logGroup.logGroupName}`);
+          if (!this.options.dryRun) {
+            try {
+              await this.logsClient.send(
+                new DeleteLogGroupCommand({ logGroupName: logGroup.logGroupName })
+              );
+              this.logger.info(`✓ Deleted orphaned Log Group: ${logGroup.logGroupName}`);
+            } catch (error: unknown) {
+              const err = error as ErrorWithMessage;
+              const errorMsg = `Failed to delete Log Group ${logGroup.logGroupName}: ${err.message || String(error)}`;
+              this.logger.error(errorMsg);
+              this.failedCleanups.push({
+                resource: `CloudWatch Log Group: ${logGroup.logGroupName}`,
+                error: err.message || String(error),
+              });
+            }
+          }
+        }
+
+        nextToken = response.nextToken;
+      } while (nextToken);
+    } catch (error: unknown) {
+      const err = error as ErrorWithMessage;
+      this.logger.error(`Failed to list CloudWatch Log Groups: ${err.message || String(error)}`);
+      this.failedCleanups.push({
+        resource: "CloudWatch Log Groups (list operation)",
+        error: err.message || String(error),
+      });
+    }
+  }
+
+  /**
    * Run full cleanup
    */
   async cleanupAll(): Promise<void> {
@@ -494,6 +558,7 @@ export class OrphanCleanup {
     // Reset failed cleanups tracker
     this.failedCleanups = [];
 
+    await this.cleanupOrphanedLogGroups();
     await this.cleanupOrphanedLambdas();
     await this.cleanupOrphanedTables();
     await this.cleanupOrphanedUserPools();

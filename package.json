@@ -1,6 +1,6 @@
 {
   "name": "@vesnathan/aws-deploy-shared",
-  "version": "1.0.0",
+  "version": "1.0.6",
   "description": "Shared utilities and types for AWS deployment projects",
   "repository": {
     "type": "git",
@@ -84,6 +84,7 @@
     "@aws-sdk/types": "^3.973.6",
     "@inquirer/figures": "^2.0.4",
     "@inquirer/prompts": "^8.3.2",
+    "@vesnathan/aws-deploy-shared": "1.0.6",
     "archiver": "^7.0.0",
     "chalk": "^5.3.0",
     "commander": "^14.0.3",
