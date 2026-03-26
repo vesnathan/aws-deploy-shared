@@ -172,6 +172,37 @@ export async function createCognitoAdminUser(
 }
 
 /**
+ * Get all groups from user pool (handles pagination)
+ */
+async function getAllGroups(
+  client: CognitoIdentityProviderClient,
+  userPoolId: string
+): Promise<string[]> {
+  const groups: string[] = [];
+  let nextToken: string | undefined;
+
+  do {
+    const response = await client.send(
+      new ListGroupsCommand({
+        UserPoolId: userPoolId,
+        NextToken: nextToken,
+      })
+    );
+
+    if (response.Groups) {
+      for (const group of response.Groups) {
+        if (group.GroupName) {
+          groups.push(group.GroupName);
+        }
+      }
+    }
+    nextToken = response.NextToken;
+  } while (nextToken);
+
+  return groups;
+}
+
+/**
  * Ensure all required groups exist in user pool
  */
 async function ensureGroups(
@@ -180,12 +211,16 @@ async function ensureGroups(
   requiredGroups: string[],
   logger: Logger
 ): Promise<void> {
-  const response = await client.send(new ListGroupsCommand({ UserPoolId: userPoolId }));
-  const existingGroups = response.Groups?.map((g: GroupType) => g.GroupName) || [];
+  const existingGroups = await getAllGroups(client, userPoolId);
 
   for (const groupName of requiredGroups) {
-    if (!existingGroups.includes(groupName)) {
-      logger.info(`  Creating group: ${groupName}`);
+    if (existingGroups.includes(groupName)) {
+      logger.info(`  Group exists: ${groupName}`);
+      continue;
+    }
+
+    logger.info(`  Creating group: ${groupName}`);
+    try {
       await client.send(
         new CreateGroupCommand({
           UserPoolId: userPoolId,
@@ -193,6 +228,18 @@ async function ensureGroups(
           Description: `Auto-created ${groupName} group`,
         })
       );
+    } catch (error: unknown) {
+      // Ignore if group already exists (race condition)
+      const err = error as { name?: string; __type?: string; Code?: string; message?: string };
+      const isGroupExists =
+        err.name === "GroupExistsException" ||
+        err.__type === "GroupExistsException" ||
+        err.Code === "GroupExistsException" ||
+        err.message?.toLowerCase().includes("group with the name already exists");
+      if (!isGroupExists) {
+        throw error;
+      }
+      logger.info(`  Group already exists: ${groupName}`);
     }
   }
 }

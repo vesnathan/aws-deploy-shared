@@ -52,6 +52,17 @@ export function formatDeletionWarning(options: WarningOptions): string {
     lines.push("");
   }
 
+  // Show ignored test users
+  if (userCheck.testUsersIgnored && userCheck.testUsersIgnored > 0) {
+    lines.push(`TEST USERS IGNORED: ${userCheck.testUsersIgnored} (won't block deletion)`);
+    if (userCheck.testUserEmails) {
+      for (const email of userCheck.testUserEmails) {
+        lines.push(`  • ${email}`);
+      }
+    }
+    lines.push("");
+  }
+
   // Resources to be deleted
   if (resources.length > 0) {
     lines.push("RESOURCES TO BE DELETED:");

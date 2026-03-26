@@ -31,7 +31,7 @@ import type { UserCheckResult, UserCheckOptions } from "./types";
 export async function checkCognitoUsers(
   options: UserCheckOptions
 ): Promise<UserCheckResult> {
-  const { stackName, region, appName, stage, seedRoleArn } = options;
+  const { stackName, region, appName, stage, seedRoleArn, testUserPattern } = options;
 
   // Step 1: Get UserPoolId from CloudFormation stack outputs
   const cfnClient = new CloudFormationClient({ region });
@@ -137,14 +137,28 @@ export async function checkCognitoUsers(
   }
 
   // Step 5: Users found - list them for display
-  const users = await listAllUsers(cognitoClient, userPoolId);
+  const allUsers = await listAllUsers(cognitoClient, userPoolId);
+
+  // Filter out test users if pattern provided
+  let realUsers = allUsers;
+  let testUsers: typeof allUsers = [];
+
+  if (testUserPattern) {
+    const pattern = new RegExp(testUserPattern, "i");
+    realUsers = allUsers.filter((user) => !pattern.test(user.email));
+    testUsers = allUsers.filter((user) => pattern.test(user.email));
+  }
 
   return {
-    hasUsers: true,
-    userCount: users.length,
-    users,
+    hasUsers: realUsers.length > 0,
+    userCount: realUsers.length,
+    users: realUsers,
     userPoolId,
-    userPoolName
+    userPoolName,
+    ...(testUsers.length > 0 && {
+      testUsersIgnored: testUsers.length,
+      testUserEmails: testUsers.map((u) => u.email),
+    }),
   };
 }
 

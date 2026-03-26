@@ -24,6 +24,8 @@ export interface UserCheckResult {
   userPoolId?: string;
   userPoolName?: string;
   error?: string; // If Cognito not found or query failed
+  testUsersIgnored?: number; // Count of test users filtered out
+  testUserEmails?: string[]; // Emails of test users that were ignored
 }
 
 export interface RemovalConfig {
@@ -39,6 +41,8 @@ export interface RemovalConfig {
   postDeleteHook?: () => Promise<void>; // For additional cleanup
   customBuckets?: string[]; // If not from stack outputs
   additionalRegions?: string[]; // For multi-region cleanup (e.g., QuizNight.Live)
+  /** Regex pattern to identify test users - these won't block deletion (e.g., "^vesnathan") */
+  testUserPattern?: string;
 }
 
 export interface DeletionOptions {
@@ -78,6 +82,8 @@ export interface UserCheckOptions {
   stage: string;
   appName: string;
   seedRoleArn?: string; // If provided, assume this role for Cognito access
+  /** Regex pattern to identify test users (e.g., "^vesnathan" matches emails starting with vesnathan) */
+  testUserPattern?: string;
 }
 
 export interface OrphanCleanupOptions {

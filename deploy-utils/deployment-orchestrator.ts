@@ -137,6 +137,13 @@ export interface DeploymentOrchestratorConfig<TStage extends string = string> {
    * Alternative to providing a custom seedDatabase callback
    */
   seedDatabaseConfig?: SeedDatabaseConfig;
+
+  /**
+   * Regex pattern to identify test users during removal
+   * Users matching this pattern won't block stack deletion
+   * e.g., "^vesnathan" matches emails starting with "vesnathan"
+   */
+  testUserPattern?: string;
 }
 
 /**
@@ -631,6 +638,7 @@ export class DeploymentOrchestrator<TStage extends string = string> {
           forceWithUsers: false, // Always prompt for user confirmation
           skipConfirmation: false,
           logger,
+          testUserPattern: this.config.testUserPattern,
         });
         break;
       }

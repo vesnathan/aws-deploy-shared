@@ -59,6 +59,7 @@ export async function removeStack(config: RemovalConfig): Promise<DeletionResult
     postDeleteHook,
     customBuckets,
     additionalRegions,
+    testUserPattern,
   } = config;
 
   const result: DeletionResult = {
@@ -114,6 +115,7 @@ export async function removeStack(config: RemovalConfig): Promise<DeletionResult
       stage,
       appName,
       seedRoleArn, // Pass the SeedRoleArn for elevated permissions
+      testUserPattern, // Filter out test users matching this pattern
     });
 
     if (userCheck.error) {
