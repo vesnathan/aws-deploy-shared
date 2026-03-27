@@ -1,0 +1,31 @@
+#!/bin/bash
+
+# Prevent direct commits to protected branches
+PROTECTED_BRANCHES="main"
+CURRENT_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null)
+
+for branch in $PROTECTED_BRANCHES; do
+  if [ "$CURRENT_BRANCH" = "$branch" ]; then
+    echo "Direct commits to '$branch' are not allowed."
+    echo ""
+    echo "Please create a feature branch:"
+    echo "  git checkout -b feature/your-feature-name"
+    echo ""
+    echo "Then commit and create a PR."
+    exit 1
+  fi
+done
+
+# Run type check
+echo "Running type check..."
+yarn tsc --noEmit
+if [ $? -ne 0 ]; then
+  echo "Type check failed. Please fix errors before committing."
+  exit 1
+fi
+
+# Run Git Gatekeeper AI review (if available)
+GATEKEEPER_HOOK="${HOME}/dev/git-gatekeeper/hooks/pre-commit"
+if [ -x "$GATEKEEPER_HOOK" ]; then
+    "$GATEKEEPER_HOOK"
+fi

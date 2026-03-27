@@ -1,0 +1,23 @@
+#!/bin/bash
+
+# Run type check before push
+echo "Running type check..."
+yarn tsc --noEmit
+if [ $? -ne 0 ]; then
+  echo "Type check failed. Please fix errors before pushing."
+  exit 1
+fi
+
+# Run build to ensure it compiles
+echo "Running build..."
+yarn build
+if [ $? -ne 0 ]; then
+  echo "Build failed. Please fix errors before pushing."
+  exit 1
+fi
+
+# Run Git Gatekeeper AI review (if available)
+GATEKEEPER_HOOK="${HOME}/dev/git-gatekeeper/hooks/pre-push"
+if [ -x "$GATEKEEPER_HOOK" ]; then
+    "$GATEKEEPER_HOOK"
+fi
