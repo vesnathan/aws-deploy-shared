@@ -64,11 +64,16 @@ export function createSecretsManager(region: string) {
    * 2. App secrets (per app): webhook secrets, price IDs
    *
    * Returns normalized secrets based on mode (live/test)
+   *
+   * For webhook secrets, supports per-stage overrides:
+   * - First tries STRIPE_TEST_WEBHOOK_SECRET_NLDEV (stage-specific)
+   * - Falls back to STRIPE_TEST_WEBHOOK_SECRET (generic)
    */
   async function getStripeSecrets(
     accountKeysEnvVar: string,
     appSecretsEnvVar: string,
     isTestMode: boolean = false,
+    stage?: string,
   ): Promise<StripeSecrets> {
     const accountKeysArn = process.env[accountKeysEnvVar];
     const appSecretsArn = process.env[appSecretsEnvVar];
@@ -80,8 +85,8 @@ export function createSecretsManager(region: string) {
       throw new Error(`${appSecretsEnvVar} not configured`);
     }
 
-    // Cache key includes both ARNs and mode
-    const cacheKey = `${accountKeysArn}:${appSecretsArn}:${isTestMode ? "test" : "live"}`;
+    // Cache key includes both ARNs, mode, and stage
+    const cacheKey = `${accountKeysArn}:${appSecretsArn}:${isTestMode ? "test" : "live"}:${stage || "default"}`;
 
     if (secretsCache[cacheKey]) {
       return secretsCache[cacheKey];
@@ -100,10 +105,17 @@ export function createSecretsManager(region: string) {
     const prefix = isTestMode ? "STRIPE_TEST_" : "STRIPE_LIVE_";
 
     // Extract keys based on mode
+    // For webhook secret, try stage-specific first (e.g., STRIPE_TEST_WEBHOOK_SECRET_NLDEV)
+    const stageUpper = stage?.toUpperCase();
+    const stageWebhookKey = stageUpper ? `${prefix}WEBHOOK_SECRET_${stageUpper}` : null;
+    const webhookSecret = (stageWebhookKey && appSecrets[stageWebhookKey])
+      ? appSecrets[stageWebhookKey]
+      : appSecrets[`${prefix}WEBHOOK_SECRET`] ?? "";
+
     const secrets: StripeSecrets = {
       secretKey: accountKeys[`${prefix}SECRET_KEY`] ?? "",
       publishableKey: accountKeys[`${prefix}PUBLISHABLE_KEY`],
-      webhookSecret: appSecrets[`${prefix}WEBHOOK_SECRET`] ?? "",
+      webhookSecret,
     };
 
     // Extract price IDs from app secrets

@@ -321,12 +321,14 @@ export function createStripeWebhookHandler<
 
       // Check test mode (based on stage)
       const testMode = isTestMode();
+      const stage = config.stageEnvVar ? process.env[config.stageEnvVar] : undefined;
 
-      // Get secrets
+      // Get secrets (pass stage for per-stack webhook secret support)
       const secrets = await secretsManager.getStripeSecrets(
         config.stripeAccountKeysEnvVar,
         config.stripeAppSecretsEnvVar,
         testMode,
+        stage,
       );
 
       // Log loaded secrets (only price ID keys, not sensitive values)
