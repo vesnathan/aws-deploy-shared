@@ -75,10 +75,7 @@ export interface ProductDefinition<
 /**
  * Webhook handler customization hooks
  */
-export interface WebhookHooks<
-  TBenefits extends object = Record<string, unknown>,
-  TProductMeta extends object = Record<string, unknown>,
-> {
+export interface WebhookHooks {
   /** Called after checkout.session.completed (subscription) */
   onSubscriptionCreated?: (
     userId: string,
@@ -190,7 +187,7 @@ export interface SubscriptionConfig<
   webhookLogTtlDays?: number;
 
   /** Optional: Custom webhook hooks */
-  hooks?: WebhookHooks<TBenefits, TProductMeta>;
+  hooks?: WebhookHooks;
 }
 
 /**
