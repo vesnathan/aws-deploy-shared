@@ -48,6 +48,12 @@ export interface SubscriptionInfo extends SubscriptionInfoMinimal {
 
   /** ISO timestamp when cancelled */
   cancelledAt: string | null;
+
+  /** ISO timestamp when gifted (for GIFTED status) */
+  giftedAt: string | null;
+
+  /** ISO timestamp when gifted subscription expires */
+  expiresAt: string | null;
 }
 
 /**
@@ -63,7 +69,60 @@ export function createDefaultSubscriptionInfo(freeTierId: string): SubscriptionI
     createdAt: null,
     currentPeriodEnd: null,
     cancelledAt: null,
+    giftedAt: null,
+    expiresAt: null,
   };
+}
+
+/**
+ * Gifted subscription term in months
+ */
+export type GiftedSubscriptionTerm = 3 | 6 | 12;
+
+/**
+ * Create a gifted subscription info
+ */
+export function createGiftedSubscriptionInfo(
+  tierId: string,
+  termMonths: GiftedSubscriptionTerm = 6
+): SubscriptionInfo {
+  const now = new Date();
+  const expiresAt = new Date(now);
+  expiresAt.setMonth(expiresAt.getMonth() + termMonths);
+
+  return {
+    tier: tierId,
+    status: "GIFTED",
+    provider: null,
+    stripeSubscriptionId: null,
+    stripeCustomerId: null,
+    createdAt: now.toISOString(),
+    currentPeriodEnd: null,
+    cancelledAt: null,
+    giftedAt: now.toISOString(),
+    expiresAt: expiresAt.toISOString(),
+  };
+}
+
+/**
+ * Check if a gifted subscription has expired
+ */
+export function isGiftExpired(expiresAt: string | null | undefined): boolean {
+  if (!expiresAt) return false;
+  return new Date(expiresAt) < new Date();
+}
+
+/**
+ * Get the effective subscription status, accounting for gift expiration
+ */
+export function getEffectiveStatus(
+  status: SubscriptionStatus,
+  expiresAt?: string | null
+): SubscriptionStatus {
+  if (status === "GIFTED" && isGiftExpired(expiresAt)) {
+    return "EXPIRED";
+  }
+  return status;
 }
 
 /**
