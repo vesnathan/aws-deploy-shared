@@ -17,6 +17,8 @@ import * as mimeTypes from "mime-types";
 import {
   S3Client,
   PutObjectCommand,
+  ListObjectsV2Command,
+  DeleteObjectsCommand,
 } from "@aws-sdk/client-s3";
 import {
   CloudFrontClient,
@@ -158,6 +160,71 @@ ${Object.entries(this.envVars)
   }
 
   /**
+   * List all objects in S3 bucket
+   */
+  private async listAllObjects(
+    s3Client: S3Client,
+    bucket: string
+  ): Promise<string[]> {
+    const keys: string[] = [];
+    let continuationToken: string | undefined;
+
+    do {
+      const response = await s3Client.send(
+        new ListObjectsV2Command({
+          Bucket: bucket,
+          ContinuationToken: continuationToken,
+        })
+      );
+
+      if (response.Contents) {
+        for (const obj of response.Contents) {
+          if (obj.Key) {
+            keys.push(obj.Key);
+          }
+        }
+      }
+
+      continuationToken = response.NextContinuationToken;
+    } while (continuationToken);
+
+    return keys;
+  }
+
+  /**
+   * Delete stale files from S3 that are not in the new build
+   */
+  private async deleteStaleFiles(
+    s3Client: S3Client,
+    bucket: string,
+    localKeys: Set<string>
+  ): Promise<number> {
+    const existingKeys = await this.listAllObjects(s3Client, bucket);
+    const keysToDelete = existingKeys.filter((key) => !localKeys.has(key));
+
+    if (keysToDelete.length === 0) {
+      return 0;
+    }
+
+    // Delete in batches of 1000 (S3 limit)
+    const batchSize = 1000;
+    for (let i = 0; i < keysToDelete.length; i += batchSize) {
+      const batch = keysToDelete.slice(i, i + batchSize);
+      await s3Client.send(
+        new DeleteObjectsCommand({
+          Bucket: bucket,
+          Delete: {
+            Objects: batch.map((key) => ({ Key: key })),
+            Quiet: true,
+          },
+        })
+      );
+    }
+
+    return keysToDelete.length;
+  }
+
+  /**
    * Upload directory to S3 with progress
    */
   private async uploadDir(
@@ -255,8 +322,19 @@ ${Object.entries(this.envVars)
 
     const bucket = this.stackOutputs.WebsiteBucket!;
 
+    // Collect local file keys for stale file cleanup
+    const localFiles = this.collectFiles(outDir);
+    const localKeys = new Set(localFiles.map((f) => f.key));
+
     await this.uploadDir(seedS3Client, bucket, outDir);
     this.logger.success("Frontend uploaded to S3");
+
+    // Delete stale files that are no longer in the build
+    this.logger.info("Cleaning up stale files...");
+    const deletedCount = await this.deleteStaleFiles(seedS3Client, bucket, localKeys);
+    if (deletedCount > 0) {
+      this.logger.debug(`Deleted ${deletedCount} stale files`);
+    }
 
     this.logger.info("Invalidating CloudFront cache...");
     await seedCfClient.send(
