@@ -49,8 +49,16 @@ export * from "./types";
 export { defineSubscriptionConfig } from "./types/config";
 
 // Re-export for convenience
-export type { SubscriptionConfig, TierDefinition, ProductDefinition } from "./types/config";
-export type { SubscriptionInfo, SubscriptionStatus, SubscriptionProvider } from "./types/subscription";
+export type { SubscriptionConfig, TierDefinition, ProductDefinition, GiftedConfig } from "./types/config";
+export type { SubscriptionInfo, SubscriptionStatus, SubscriptionProvider, GiftedSubscriptionTerm } from "./types/subscription";
+
+// Gifted subscription utilities
+export {
+  createGiftedSubscriptionInfo,
+  isGiftExpired,
+  getEffectiveStatus,
+  createDefaultSubscriptionInfo,
+} from "./types/subscription";
 
 // Note: validateSubscriptionConfig (Zod validation) is available via:
 // import { validateSubscriptionConfig } from "@aws-deploy-shared/subscription/config";

@@ -6,6 +6,8 @@
  * and configure Lambda handlers.
  */
 
+import type { GiftedSubscriptionTerm } from "./subscription";
+
 /** Currency for pricing (ISO 4217) */
 export type Currency = "USD" | "AUD" | "EUR" | "GBP";
 
@@ -188,6 +190,52 @@ export interface SubscriptionConfig<
 
   /** Optional: Custom webhook hooks */
   hooks?: WebhookHooks;
+
+  /**
+   * Gifted subscription configuration.
+   * When enabled, new users can receive a gifted subscription instead of paying.
+   */
+  gifted?: GiftedConfig;
+}
+
+/**
+ * Configuration for gifted subscriptions
+ */
+export interface GiftedConfig {
+  /**
+   * Whether gifted subscriptions are enabled.
+   * Can be a boolean or a function for dynamic control.
+   */
+  enabled: boolean;
+
+  /**
+   * The tier ID to grant for gifted subscriptions.
+   * Must be a valid tier ID from the tiers array.
+   */
+  tierId: string;
+
+  /**
+   * Duration of the gifted subscription in months.
+   * @default 6
+   */
+  termMonths?: GiftedSubscriptionTerm;
+
+  /**
+   * Whether to show the remaining time to users.
+   * @default true for travellers, false for hosts
+   */
+  showRemainingTime?: boolean;
+
+  /**
+   * Custom message to show when gifted subscription is active.
+   * Supports {months} placeholder for remaining time.
+   */
+  activeMessage?: string;
+
+  /**
+   * Custom message to show when gifted subscription expires.
+   */
+  expiredMessage?: string;
 }
 
 /**

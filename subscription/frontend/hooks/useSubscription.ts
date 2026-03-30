@@ -9,6 +9,7 @@ import type {
   ProductDefinition,
 } from "../../types/config";
 import type { SubscriptionInfoMinimal, SubscriptionStatus } from "../../types/subscription";
+import { isGiftExpired, getEffectiveStatus } from "../../types/subscription";
 
 /**
  * Checkout URL options
@@ -33,7 +34,10 @@ export interface SubscriptionHookDependencies<
 
   /** Function to fetch user profile with subscription info */
   fetchUserProfile: () => Promise<{
-    subscription?: SubscriptionInfoMinimal;
+    subscription?: SubscriptionInfoMinimal & {
+      giftedAt?: string | null;
+      expiresAt?: string | null;
+    };
   }>;
 
   /** Function to create checkout session */
@@ -76,8 +80,22 @@ export interface UseSubscriptionReturn<TBenefits extends Record<string, unknown>
 
   // Status
   status: SubscriptionStatus;
+  /** Effective status (accounts for gift expiration) */
+  effectiveStatus: SubscriptionStatus;
   isSubscribed: boolean;
   isActive: boolean;
+
+  // Gifted subscription info
+  /** Whether subscription is gifted */
+  isGifted: boolean;
+  /** Whether gifted subscription has expired */
+  isGiftExpired: boolean;
+  /** When gift was granted (ISO string) */
+  giftedAt: string | null;
+  /** When gift expires (ISO string) */
+  giftExpiresAt: string | null;
+  /** Remaining time on gift (formatted string, e.g. "3 months") */
+  giftRemainingTime: string | null;
 
   // Benefits
   benefits: TBenefits;
@@ -130,6 +148,8 @@ export function createSubscriptionHook<
     const { user, isAuthenticated } = dependencies.useAuth();
     const [tierId, setTierId] = useState<string>(config.freeTierId);
     const [status, setStatus] = useState<SubscriptionStatus>(null);
+    const [giftedAt, setGiftedAt] = useState<string | null>(null);
+    const [expiresAt, setExpiresAt] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
 
     // Derived values
@@ -138,8 +158,36 @@ export function createSubscriptionHook<
     const tierLevel = tier.level;
     const tierColor = tier.badgeColor || "#6B7280";
     const isSubscribed = tierId !== config.freeTierId;
-    const isActive = isSubscribed && status === "ACTIVE";
+
+    // Gifted subscription state
+    const isGifted = status === "GIFTED";
+    const giftExpired = isGifted && isGiftExpired(expiresAt);
+    const effectiveStatus = getEffectiveStatus(status, expiresAt);
+
+    // isActive should consider both regular subscriptions and non-expired gifts
+    const isActive =
+      isSubscribed &&
+      (status === "ACTIVE" || (status === "GIFTED" && !giftExpired));
+
     const benefits = tier.benefits;
+
+    // Calculate remaining time on gift
+    const giftRemainingTime = useMemo(() => {
+      if (!isGifted || !expiresAt || giftExpired) return null;
+      const now = new Date();
+      const expires = new Date(expiresAt);
+      const diffMs = expires.getTime() - now.getTime();
+      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      const diffMonths = Math.floor(diffDays / 30);
+
+      if (diffMonths >= 1) {
+        return `${diffMonths} month${diffMonths === 1 ? "" : "s"}`;
+      }
+      if (diffDays >= 1) {
+        return `${diffDays} day${diffDays === 1 ? "" : "s"}`;
+      }
+      return "less than a day";
+    }, [isGifted, expiresAt, giftExpired]);
 
     // Benefit check
     const hasBenefit = useCallback(
@@ -162,6 +210,8 @@ export function createSubscriptionHook<
       if (!isAuthenticated || !user) {
         setTierId(config.freeTierId);
         setStatus(null);
+        setGiftedAt(null);
+        setExpiresAt(null);
         setIsLoading(false);
         return;
       }
@@ -172,14 +222,20 @@ export function createSubscriptionHook<
         if (profile?.subscription) {
           setTierId(profile.subscription.tier || config.freeTierId);
           setStatus(profile.subscription.status);
+          setGiftedAt(profile.subscription.giftedAt ?? null);
+          setExpiresAt(profile.subscription.expiresAt ?? null);
         } else {
           setTierId(config.freeTierId);
           setStatus(null);
+          setGiftedAt(null);
+          setExpiresAt(null);
         }
       } catch (error) {
         console.error("Failed to fetch subscription:", error);
         setTierId(config.freeTierId);
         setStatus(null);
+        setGiftedAt(null);
+        setExpiresAt(null);
       } finally {
         setIsLoading(false);
       }
@@ -294,8 +350,14 @@ export function createSubscriptionHook<
       tierLevel,
       tierColor,
       status,
+      effectiveStatus,
       isSubscribed,
       isActive,
+      isGifted,
+      isGiftExpired: giftExpired,
+      giftedAt,
+      giftExpiresAt: expiresAt,
+      giftRemainingTime,
       benefits,
       hasBenefit,
       isAtLeastTier,
