@@ -1,11 +1,13 @@
 /**
- * Subscription status values
+ * Subscription status values (uppercase to match GraphQL enum convention)
  */
 export type SubscriptionStatus =
-  | "active"
-  | "trialing"
-  | "past_due"
-  | "cancelled"
+  | "ACTIVE"
+  | "TRIAL"
+  | "PAST_DUE"
+  | "CANCELLED"
+  | "EXPIRED"
+  | "GIFTED"
   | null;
 
 /**
@@ -26,22 +28,23 @@ export interface SubscriptionInfoMinimal {
 
 /**
  * Full subscription info stored on user profile
+ * Field names match GraphQL conventions for direct type compatibility
  */
 export interface SubscriptionInfo extends SubscriptionInfoMinimal {
   /** Payment provider */
   provider: SubscriptionProvider | null;
 
-  /** Provider's subscription ID */
-  subscriptionId: string | null;
+  /** Stripe subscription ID */
+  stripeSubscriptionId: string | null;
 
-  /** Provider's customer ID */
-  customerId: string | null;
+  /** Stripe customer ID */
+  stripeCustomerId: string | null;
 
-  /** ISO timestamp when subscription started */
-  startedAt: string | null;
+  /** ISO timestamp when subscription was created */
+  createdAt: string | null;
 
-  /** ISO timestamp when subscription expires (for cancelled) */
-  expiresAt: string | null;
+  /** ISO timestamp when current billing period ends */
+  currentPeriodEnd: string | null;
 
   /** ISO timestamp when cancelled */
   cancelledAt: string | null;
@@ -55,10 +58,10 @@ export function createDefaultSubscriptionInfo(freeTierId: string): SubscriptionI
     tier: freeTierId,
     status: null,
     provider: null,
-    subscriptionId: null,
-    customerId: null,
-    startedAt: null,
-    expiresAt: null,
+    stripeSubscriptionId: null,
+    stripeCustomerId: null,
+    createdAt: null,
+    currentPeriodEnd: null,
     cancelledAt: null,
   };
 }
@@ -75,14 +78,14 @@ export type StripeWebhookEventType =
   | "invoice.payment_failed";
 
 /**
- * Stripe subscription status mapping
+ * Stripe subscription status mapping (to uppercase GraphQL enum values)
  */
 export const STRIPE_STATUS_MAP: Record<string, SubscriptionStatus> = {
-  active: "active",
-  trialing: "trialing",
-  past_due: "past_due",
-  canceled: "cancelled",
-  unpaid: "cancelled",
+  active: "ACTIVE",
+  trialing: "TRIAL",
+  past_due: "PAST_DUE",
+  canceled: "CANCELLED",
+  unpaid: "CANCELLED",
   incomplete: null,
   incomplete_expired: null,
 };

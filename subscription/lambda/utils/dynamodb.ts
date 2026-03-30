@@ -86,7 +86,7 @@ export function createDynamoDBHelper(region: string, config: DynamoDBConfig) {
     currentPeriodEnd?: number,
   ): Promise<void> {
     const now = new Date().toISOString();
-    const expiresAt = currentPeriodEnd
+    const periodEnd = currentPeriodEnd
       ? new Date(currentPeriodEnd * 1000).toISOString()
       : null;
 
@@ -94,20 +94,21 @@ export function createDynamoDBHelper(region: string, config: DynamoDBConfig) {
 
     // Build the subscription object to set atomically
     // This avoids issues with nested path updates when parent doesn't exist
+    // Field names match GraphQL conventions for direct type compatibility
     const subscriptionData = {
       tier: tierId,
       status: status,
       provider: "stripe",
-      subscriptionId: subscriptionId,
-      customerId: customerId,
-      startedAt: now, // Will be overwritten below if exists
-      expiresAt: expiresAt,
+      stripeSubscriptionId: subscriptionId,
+      stripeCustomerId: customerId,
+      createdAt: now, // Will be overwritten below if exists
+      currentPeriodEnd: periodEnd,
     };
 
-    // First, get existing subscription to preserve startedAt if it exists
+    // First, get existing subscription to preserve createdAt if it exists
     const existing = await getUserSubscription(userId);
-    if (existing?.startedAt) {
-      subscriptionData.startedAt = existing.startedAt;
+    if (existing?.createdAt) {
+      subscriptionData.createdAt = existing.createdAt;
     }
 
     await docClient.send(
@@ -165,7 +166,7 @@ export function createDynamoDBHelper(region: string, config: DynamoDBConfig) {
         },
         ExpressionAttributeValues: {
           ":tier": freeTierId,
-          ":status": "cancelled",
+          ":status": "CANCELLED",
           ":now": now,
         },
       }),
@@ -196,7 +197,7 @@ export function createDynamoDBHelper(region: string, config: DynamoDBConfig) {
           "#st": "status",
         },
         ExpressionAttributeValues: {
-          ":status": "past_due",
+          ":status": "PAST_DUE",
           ":now": now,
         },
       }),
@@ -259,7 +260,7 @@ export function createDynamoDBHelper(region: string, config: DynamoDBConfig) {
    */
   async function getUserSubscription(
     userId: string,
-  ): Promise<{ stripeCustomerId: string; stripeSubscriptionId: string; startedAt?: string } | null> {
+  ): Promise<{ stripeCustomerId: string; stripeSubscriptionId: string; createdAt?: string } | null> {
     try {
       const result = await docClient.send(
         new GetCommand({
@@ -285,9 +286,9 @@ export function createDynamoDBHelper(region: string, config: DynamoDBConfig) {
         current = current[part] as Record<string, unknown>;
       }
 
-      const customerId = current.customerId as string | undefined;
-      const subscriptionId = current.subscriptionId as string | undefined;
-      const startedAt = current.startedAt as string | undefined;
+      const customerId = current.stripeCustomerId as string | undefined;
+      const subscriptionId = current.stripeSubscriptionId as string | undefined;
+      const createdAt = current.createdAt as string | undefined;
 
       if (!customerId) {
         return null;
@@ -296,7 +297,7 @@ export function createDynamoDBHelper(region: string, config: DynamoDBConfig) {
       return {
         stripeCustomerId: customerId,
         stripeSubscriptionId: subscriptionId || "",
-        startedAt,
+        createdAt,
       };
     } catch (error) {
       console.error("Error getting user subscription:", error);

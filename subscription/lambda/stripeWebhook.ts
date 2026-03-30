@@ -139,7 +139,7 @@ export function createStripeWebhookHandler<
     await dynamoHelper.updateUserSubscription(
       userId,
       tierId,
-      "active",
+      "ACTIVE",
       customerId,
       subscriptionId,
     );

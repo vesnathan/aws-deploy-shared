@@ -138,7 +138,7 @@ export function createSubscriptionHook<
     const tierLevel = tier.level;
     const tierColor = tier.badgeColor || "#6B7280";
     const isSubscribed = tierId !== config.freeTierId;
-    const isActive = isSubscribed && status === "active";
+    const isActive = isSubscribed && status === "ACTIVE";
     const benefits = tier.benefits;
 
     // Benefit check
