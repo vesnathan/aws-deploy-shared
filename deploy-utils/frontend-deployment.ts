@@ -2,10 +2,14 @@
  * Shared Frontend Deployment
  *
  * Handles frontend deployment for Next.js static exports:
- * - Generates .env.local with stack outputs
+ * - Passes NEXT_PUBLIC_* env vars directly to build process (industry standard)
  * - Builds Next.js frontend (yarn build)
  * - Uploads to S3
  * - Invalidates CloudFront cache
+ *
+ * NOTE: Environment variables are passed inline to the build command,
+ * NOT written to .env.local. This preserves developers' local configs
+ * and follows CI/CD best practices.
  *
  * Used by ALL projects with Next.js frontends
  */
@@ -38,7 +42,7 @@ export interface FrontendDeploymentConfig {
   region: string; // AWS region
   stackOutputs: Record<string, string>; // CloudFormation stack outputs
   frontendUrl?: string; // Override for NEXT_PUBLIC_FRONTEND_URL (e.g., custom domain)
-  envVars?: Record<string, string>; // Additional env vars for .env.local
+  envVars?: Record<string, string>; // Additional NEXT_PUBLIC_* env vars (non-public vars are filtered out)
   buildCommand?: string; // Default: "yarn build"
 }
 
@@ -73,44 +77,57 @@ export class FrontendDeployment {
   }
 
   /**
-   * Generate .env.local file with stack outputs
+   * Build environment variables object for the frontend build.
+   * Only includes NEXT_PUBLIC_* vars (safe for client-side).
+   * These are passed directly to the build process, not written to files.
    */
-  private generateEnvLocal(): void {
-    const frontendDir = path.join(this.projectRoot, "frontend");
+  private getBuildEnvVars(): Record<string, string> {
+    const buildEnv: Record<string, string> = {
+      NEXT_PUBLIC_AWS_REGION: this.region,
+      NEXT_PUBLIC_USER_POOL_ID: this.stackOutputs.UserPoolId || "",
+      NEXT_PUBLIC_USER_POOL_CLIENT_ID: this.stackOutputs.UserPoolClientId || "",
+      NEXT_PUBLIC_IDENTITY_POOL_ID: this.stackOutputs.IdentityPoolId || "",
+      NEXT_PUBLIC_GRAPHQL_API_ENDPOINT: this.stackOutputs.ApiUrl || "",
+      NEXT_PUBLIC_COGNITO_DOMAIN: this.stackOutputs.CognitoDomain || "",
+      NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED: this.stackOutputs.GoogleOAuthEnabled || "false",
+      NEXT_PUBLIC_FRONTEND_URL: this.frontendUrl,
+    };
 
-    const envContent = `
-NEXT_PUBLIC_AWS_REGION=${this.region}
-NEXT_PUBLIC_USER_POOL_ID=${this.stackOutputs.UserPoolId || ""}
-NEXT_PUBLIC_USER_POOL_CLIENT_ID=${this.stackOutputs.UserPoolClientId || ""}
-NEXT_PUBLIC_IDENTITY_POOL_ID=${this.stackOutputs.IdentityPoolId || ""}
-NEXT_PUBLIC_GRAPHQL_API_ENDPOINT=${this.stackOutputs.ApiUrl || ""}
-NEXT_PUBLIC_COGNITO_DOMAIN=${this.stackOutputs.CognitoDomain || ""}
-NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED=${this.stackOutputs.GoogleOAuthEnabled || "false"}
-NEXT_PUBLIC_FRONTEND_URL=${this.frontendUrl}
-${Object.entries(this.envVars)
-  .map(([key, value]) => `${key}=${value}`)
-  .join("\n")}
-`.trim();
+    // Add additional env vars, but only NEXT_PUBLIC_* ones (safety filter)
+    for (const [key, value] of Object.entries(this.envVars)) {
+      if (key.startsWith("NEXT_PUBLIC_")) {
+        buildEnv[key] = value;
+      } else {
+        this.logger.warning(`Skipping non-public env var: ${key} (must start with NEXT_PUBLIC_)`);
+      }
+    }
 
-    fs.writeFileSync(path.join(frontendDir, ".env.local"), envContent);
-    this.logger.debug("Created .env.local");
+    return buildEnv;
   }
 
   /**
    * Build frontend with yarn build
+   * Environment variables are passed directly to the build process,
+   * not written to .env.local (preserves developer's local config)
    */
   public async buildFrontend(): Promise<void> {
     this.logger.info("Building frontend...");
 
-    this.generateEnvLocal();
-
     const frontendDir = path.join(this.projectRoot, "frontend");
+    const buildEnv = this.getBuildEnvVars();
 
-    // Use pipe for stdout to suppress RSC payload noise, inherit stderr for errors
+    this.logger.debug(`Build environment variables: ${Object.keys(buildEnv).join(", ")}`);
+
+    // Pass env vars directly to the build process
+    // This follows industry best practice and doesn't clobber .env.local
     const result = spawnSync(this.buildCommand, {
       cwd: frontendDir,
       stdio: ["inherit", "pipe", "inherit"],
       shell: true,
+      env: {
+        ...process.env,  // Inherit system env (PATH, etc.)
+        ...buildEnv,     // Override with build-specific NEXT_PUBLIC_* vars
+      },
     });
 
     if (result.status !== 0) {
