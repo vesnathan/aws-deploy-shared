@@ -82,6 +82,9 @@ export class FrontendDeployment {
    * These are passed directly to the build process, not written to files.
    */
   private getBuildEnvVars(): Record<string, string> {
+    // Disable debug logging for prod/staging (overrides local .env files)
+    const isProduction = this.stage === "prod" || this.stage === "staging";
+
     const buildEnv: Record<string, string> = {
       NEXT_PUBLIC_AWS_REGION: this.region,
       NEXT_PUBLIC_USER_POOL_ID: this.stackOutputs.UserPoolId || "",
@@ -91,6 +94,7 @@ export class FrontendDeployment {
       NEXT_PUBLIC_COGNITO_DOMAIN: this.stackOutputs.CognitoDomain || "",
       NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED: this.stackOutputs.GoogleOAuthEnabled || "false",
       NEXT_PUBLIC_FRONTEND_URL: this.frontendUrl,
+      NEXT_PUBLIC_DEBUG_MODE: isProduction ? "false" : "true",
     };
 
     // Add additional env vars, but only NEXT_PUBLIC_* ones (safety filter)
