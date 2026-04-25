@@ -28,6 +28,13 @@ export interface CreateCheckoutRequest {
 
   /** Optional additional metadata */
   metadata?: Record<string, string>;
+
+  /**
+   * If true, the subscription is created with `cancel_at_period_end=true` so it
+   * does not auto-renew. Lets callers offer auto-renew as an opt-in at signup.
+   * Subscription checkouts only; ignored for product checkouts.
+   */
+  cancelAtPeriodEnd?: boolean;
 }
 
 /**
