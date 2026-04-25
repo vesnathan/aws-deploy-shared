@@ -46,28 +46,34 @@ export function createCheckoutHandler<
     secretKey: string,
     priceId: string,
   ): Promise<CreateCheckoutResponse> {
+    const body: Record<string, string> = {
+      mode: "subscription",
+      "line_items[0][price]": priceId,
+      "line_items[0][quantity]": "1",
+      success_url: request.successUrl,
+      cancel_url: request.cancelUrl,
+      "metadata[userId]": request.userId,
+      "metadata[tierId]": request.itemId,
+      "metadata[projectId]": config.projectId,
+      "subscription_data[metadata][userId]": request.userId,
+      "subscription_data[metadata][tierId]": request.itemId,
+      "subscription_data[description]": config.projectName,
+      // For subscriptions, use on_behalf_of or set at account/product level for statement descriptor
+      // The account's default statement descriptor will be used
+      allow_promotion_codes: "true",
+    };
+
+    if (request.cancelAtPeriodEnd) {
+      body["subscription_data[cancel_at_period_end]"] = "true";
+    }
+
     const response = await fetch("https://api.stripe.com/v1/checkout/sessions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${secretKey}`,
         "Content-Type": "application/x-www-form-urlencoded",
       },
-      body: new URLSearchParams({
-        mode: "subscription",
-        "line_items[0][price]": priceId,
-        "line_items[0][quantity]": "1",
-        success_url: request.successUrl,
-        cancel_url: request.cancelUrl,
-        "metadata[userId]": request.userId,
-        "metadata[tierId]": request.itemId,
-        "metadata[projectId]": config.projectId,
-        "subscription_data[metadata][userId]": request.userId,
-        "subscription_data[metadata][tierId]": request.itemId,
-        "subscription_data[description]": config.projectName,
-        // For subscriptions, use on_behalf_of or set at account/product level for statement descriptor
-        // The account's default statement descriptor will be used
-        allow_promotion_codes: "true",
-      }),
+      body: new URLSearchParams(body),
     });
 
     if (!response.ok) {
