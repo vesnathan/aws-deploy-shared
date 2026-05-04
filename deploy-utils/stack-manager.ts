@@ -315,7 +315,10 @@ export class StackManager {
    */
   private async waitForStackWithProgress(
     operation: "CREATE" | "UPDATE",
-    maxWaitTime: number = 900
+    // 60 min — Cognito custom-domain teardown alone can take 20–60 min
+    // because CloudFront has to drain. The old 15-min default reported
+    // false-positive timeouts on otherwise-healthy deploys.
+    maxWaitTime: number = 3600
   ): Promise<void> {
     const startTime = Date.now();
     const pollInterval = 10000; // 10 seconds
