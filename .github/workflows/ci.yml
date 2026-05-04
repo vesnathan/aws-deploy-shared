@@ -64,6 +64,9 @@ jobs:
     name: Publish to GitHub Packages
     runs-on: ubuntu-latest
     needs: [build]
+    permissions:
+      contents: read
+      packages: write
     # always() needed because `test` is skipped on push (PR-only), which
     # otherwise propagates "skipped" through `build` to here even though
     # build itself succeeded.
