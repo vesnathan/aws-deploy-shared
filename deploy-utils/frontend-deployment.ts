@@ -27,6 +27,7 @@ import {
 import {
   CloudFrontClient,
   CreateInvalidationCommand,
+  waitUntilInvalidationCompleted,
 } from "@aws-sdk/client-cloudfront";
 import {
   STSClient,
@@ -141,23 +142,7 @@ export class FrontendDeployment {
     this.logger.success("Frontend build complete");
   }
 
-  /**
-   * Count files in directory recursively
-   */
-  private countFiles(dir: string): number {
-    let count = 0;
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        count += this.countFiles(path.join(dir, entry.name));
-      } else {
-        count++;
-      }
-    }
-    return count;
-  }
-
-  /**
+/**
    * Collect all files in directory recursively
    */
   private collectFiles(
@@ -358,7 +343,7 @@ export class FrontendDeployment {
     }
 
     this.logger.info("Invalidating CloudFront cache...");
-    await seedCfClient.send(
+    const invalidation = await seedCfClient.send(
       new CreateInvalidationCommand({
         DistributionId: this.stackOutputs.CloudFrontDistributionId,
         InvalidationBatch: {
@@ -370,6 +355,21 @@ export class FrontendDeployment {
         },
       })
     );
+
+    const invalidationId = invalidation.Invalidation?.Id;
+    if (invalidationId) {
+      this.logger.info(
+        `Waiting for CloudFront invalidation ${invalidationId} to complete (typically 1-5 minutes)...`
+      );
+      await waitUntilInvalidationCompleted(
+        { client: seedCfClient, maxWaitTime: 900 },
+        {
+          DistributionId: this.stackOutputs.CloudFrontDistributionId,
+          Id: invalidationId,
+        }
+      );
+      this.logger.success("CloudFront invalidation completed.");
+    }
 
     this.logger.success(`Frontend deployed to: ${this.frontendUrl}`);
   }

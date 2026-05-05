@@ -1,6 +1,6 @@
 {
   "name": "@vesnathan/aws-deploy-shared",
-  "version": "1.0.16",
+  "version": "1.0.17",
   "description": "Shared utilities and types for AWS deployment projects",
   "repository": {
     "type": "git",
