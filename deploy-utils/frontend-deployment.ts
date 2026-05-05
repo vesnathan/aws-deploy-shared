@@ -142,23 +142,7 @@ export class FrontendDeployment {
     this.logger.success("Frontend build complete");
   }
 
-  /**
-   * Count files in directory recursively
-   */
-  private countFiles(dir: string): number {
-    let count = 0;
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        count += this.countFiles(path.join(dir, entry.name));
-      } else {
-        count++;
-      }
-    }
-    return count;
-  }
-
-  /**
+/**
    * Collect all files in directory recursively
    */
   private collectFiles(
