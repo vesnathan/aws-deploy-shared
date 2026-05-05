@@ -1,10 +1,10 @@
 {
   "name": "@vesnathan/aws-deploy-shared",
-  "version": "1.0.17",
+  "version": "1.0.18",
   "description": "Shared utilities and types for AWS deployment projects",
   "repository": {
     "type": "git",
-    "url": "https://github.com/vesnathan/shared.git"
+    "url": "https://github.com/vesnathan/aws-deploy-shared.git"
   },
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
